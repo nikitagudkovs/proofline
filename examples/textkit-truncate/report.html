@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proofline report 20261117-182257</title>
+<style>
+  :root { --bg:#fbfaf7; --fg:#1c1b19; --muted:#6f6b63; --line:#e4e0d6; --card:#fff; --pass:#17694a; --pass-bg:#e3f3ea; --fail:#a3271f; --fail-bg:#fbe6e3; --none:#6f6b63; --none-bg:#eeebe3; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#151412; --fg:#ece9e1; --muted:#9a958a; --line:#2e2c27; --card:#1d1c19; --pass:#6fd3a5; --pass-bg:#16332a; --fail:#f09088; --fail-bg:#3b1b18; --none:#9a958a; --none-bg:#2a2823; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:32px 16px 64px; background:var(--bg); color:var(--fg); font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
+  main { max-width:1100px; margin:0 auto; }
+  h1 { font-size:14px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin:0 0 8px; }
+  .headline { font-size:34px; font-weight:700; letter-spacing:-.02em; margin:0 0 6px; color:var(--pass); }
+  .goal { font-size:18px; margin:0 0 14px; max-width:70ch; }
+  .meta { color:var(--muted); font-size:13px; margin:0 0 28px; }
+  h2 { font-size:13px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin:36px 0 10px; }
+  .scroll { overflow-x:auto; border:1px solid var(--line); border-radius:10px; background:var(--card); }
+  table { border-collapse:collapse; width:100%; min-width:720px; }
+  th, td { text-align:left; vertical-align:top; padding:12px 14px; border-bottom:1px solid var(--line); }
+  th { font-size:12px; font-weight:600; color:var(--muted); }
+  tr:last-child td { border-bottom:0; }
+  code, pre { font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  pre { margin:0; white-space:pre-wrap; word-break:break-word; color:var(--muted); }
+  table.matrix { table-layout:fixed; min-width:900px; }
+  table.matrix th:nth-child(1) { width:84px; } table.matrix th:nth-child(3) { width:120px; }
+  table.matrix th:nth-child(4) { width:84px; } table.matrix th:nth-child(5) { width:96px; }
+  table.matrix th:nth-child(6) { width:30%; }
+  .proof code { word-break:break-word; }
+  .cid { font-weight:700; font-size:12px; color:var(--muted); }
+  .proof { margin-top:6px; font-size:13px; color:var(--muted); }
+  .muted { color:var(--muted); }
+  .pill { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
+  .pill.pass { color:var(--pass); background:var(--pass-bg); }
+  .pill.fail { color:var(--fail); background:var(--fail-bg); }
+  .pill.none { color:var(--none); background:var(--none-bg); }
+  .tag { display:inline-block; padding:1px 7px; border:1px solid var(--line); border-radius:6px; font-size:12px; font-weight:600; }
+  ul { margin:0; padding:0 0 0 2px; list-style:none; } li { margin:6px 0; }
+  .caught li { border:1px solid var(--line); border-radius:10px; background:var(--card); padding:12px 14px; }
+  .caught pre { margin-top:8px; }
+  footer { margin-top:28px; color:var(--muted); font-size:13px; max-width:80ch; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Proofline report</h1>
+  <p class="headline">Proven: 4 of 4 criteria</p>
+  <p class="goal">Add a truncate(text, max) helper that shortens long strings with an ellipsis.</p>
+  <p class="meta">run 20261117-182257 · branch <code>proofline/20261117-182257</code> off <code>main@6c2f30c</code> · 1m 1s · <span class="round">round 1: 3/4</span> → <span class="round">round 2: 4/4</span></p>
+
+  <h2>Contract → result</h2>
+  <div class="scroll"><table class="matrix">
+    <thead><tr><th></th><th>Criterion and its proof</th><th>Before the work</th><th>Built by</th><th>Commits</th><th>Evidence</th></tr></thead>
+    <tbody>
+<tr class="pass">
+  <td class="verdict"><span class="pill pass">pass</span></td>
+  <td><div class="cid">C1</div>truncate('hello world', 8) returns 'hello w…' (never longer than max, ends with one ellipsis character)<div class="proof"><code>node --test test/truncate.test.js</code></div></td>
+  <td class="muted">failed, as expected</td>
+  <td><span class="tag">T1</span></td>
+  <td><code>553f8e2</code></td>
+  <td><pre>`node --test test/truncate.test.js` → exit 0 in 0.1s
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 78.11365</pre></td>
+</tr>
+<tr class="pass">
+  <td class="verdict"><span class="pill pass">pass</span></td>
+  <td><div class="cid">C2</div>A string no longer than max is returned unchanged<div class="proof"><code>node --input-type=module -e &quot;import {truncate} from './src/index.js'; import assert from 'node:assert/strict'; assert.equal(truncate('short', 10), 'short'); assert.equal(truncate('exact', 5), 'exact');&quot;</code></div></td>
+  <td class="muted">failed, as expected</td>
+  <td><span class="tag">T1</span></td>
+  <td><code>553f8e2</code></td>
+  <td><pre>`node --input-type=module -e &quot;import {truncate} from './src/index.js'; import assert from 'node:assert/strict'; assert.equal(truncate('short', 10), 'short'); assert.equal(truncate('exact', 5), 'exact');&quot;` → exit 0 in 0.0s</pre></td>
+</tr>
+<tr class="pass">
+  <td class="verdict"><span class="pill pass">pass</span></td>
+  <td><div class="cid">C3</div>truncate throws a RangeError when max is less than 1<div class="proof"><span class="muted">review:</span> Does truncate in src/index.js throw a RangeError (not a generic Error) when max is less than 1, and does a test assert it?</div></td>
+  <td class="muted">n/a</td>
+  <td><span class="tag">T1</span></td>
+  <td><code>553f8e2</code></td>
+  <td><pre>src/index.js:8-10 throws `new RangeError('max must be at least 1')` when `!(max &gt;= 1)`, which covers 0 and negatives (and NaN). test/truncate.test.js:14-17 asserts `assert.throws(..., RangeError)` for max=0 and max=-3. I read the code but did not run the tests.</pre></td>
+</tr>
+<tr class="pass">
+  <td class="verdict"><span class="pill pass">pass</span></td>
+  <td><div class="cid">C4</div>The README API section documents truncate with an example<div class="proof"><span class="muted">review:</span> Does the API section of README.md list truncate(text, max) and show an example call with its result?</div></td>
+  <td class="muted">n/a</td>
+  <td><span class="tag">T2</span> <span class="tag">FIX1</span></td>
+  <td><code>ccd8e18</code> <code>27c8b18</code></td>
+  <td><pre>README.md:5-8 has the &quot;## API&quot; section, and line 8 lists `truncate(text, max)` with a description. README.md:10-13 gives example calls with results: `truncate(&quot;Hello, world!&quot;, 8); // &quot;Hello, …&quot;` and `truncate(&quot;Hi&quot;, 8); // &quot;Hi&quot;`. The first result is consistent with the implementation in src/index.js:7-11 and the test at test/truncate.test.js:6. It keeps max-1 characters and adds &quot;…&quot;, so &quot;Hello, &quot; (7 characters) plus &quot;…&quot; gives 8.</pre></td>
+</tr>
+    </tbody>
+  </table></div>
+
+  <h2>Caught by verification and sent back</h2>
+  <ul class="caught"><li><span class="pill fail">C4 · round 1</span><pre>README.md:8 lists `truncate(text, max)` under the API section, and README.md:11-12 gives example calls. The first example is wrong. README.md:11 says `truncate(&quot;Hello, world!&quot;, 8); // &quot;Hello...&quot;`. The implementation at src/index.js:14 returns `text.slice(0, max - 1) + '…'`, which is a single Unicode ellipsis character. That gives &quot;Hello, …&quot; for this call, not &quot;Hello...&quot;. README.md:8 also says the ellipsis is `...`, but the code uses `…`. So the documented result doesn't match the real behavior.</pre></li></ul>
+
+  <h2>Tasks</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Task</th><th>Status</th><th>Attempts</th><th>Commits</th><th>Builder's summary (not proof)</th></tr></thead>
+    <tbody>
+<tr><td><span class="tag">T1</span> truncate and its tests</td><td>merged</td><td>1</td><td>1</td><td>Added `truncate(text, max)` to src/index.js and tests in test/truncate.test.js. It returns the text unchanged if it fits, otherwise cuts it to max-1 characters plus '…'. It throws a RangeError when max &lt; 1 (including NaN). All tests pass and the C2 proof command passes.</td></tr>
+<tr><td><span class="tag">T2</span> README entry</td><td>merged</td><td>1</td><td>1</td><td>Added a truncate(text, max) entry to the API section of README.md, with a description and an example. truncate(&quot;Hello, world!&quot;, 8) returns &quot;Hello...&quot;, and short text comes back unchanged. No source files were touched, and the change is committed.</td></tr>
+<tr><td><span class="tag">FIX1</span> Fix C4</td><td>merged</td><td>1</td><td>1</td><td>I fixed README.md so the truncate docs match what the code does. The ellipsis is described as a single character (`…`), and the example now reads `truncate(&quot;Hello, world!&quot;, 8); // &quot;Hello, …&quot;`. I left the implementation alone.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Concerns about the contract, raised by builders</h2>
+  <ul><li><span class="tag">T2</span> The task doesn't say whether the ellipsis counts toward max, or whether it is three dots or the single character …. I assumed three dots counted inside max. The truncate implementation task must match this, or the README example must be updated.</li><li><span class="tag">FIX1</span> `node --test test/` fails because Node treats `test/` as a file. Use plain `node --test` or `npm test` for this package. A hook also blocked my first `npm test` attempt, so I used `node --test`.</li></ul>
+
+  <h2>Agent usage</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Role</th><th>Runs</th><th>Turns</th><th>Agent time</th><th>List-price equivalent</th></tr></thead>
+    <tbody>
+<tr><td>planner</td><td>0</td><td>0</td><td>0s</td><td>$0.00</td></tr>
+<tr><td>builder</td><td>3</td><td>17</td><td>46s</td><td>$0.29</td></tr>
+<tr><td>verifier</td><td>4</td><td>15</td><td>25s</td><td>$0.10</td></tr>
+    </tbody>
+  </table></div>
+
+  <footer>Command proofs were run by the harness itself. Review proofs came from a read-only agent that saw the criterion and the code, never the builders' output.</footer>
+</main>
+</body>
+</html>

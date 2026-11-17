@@ -1,0 +1,38 @@
+{
+  "name": "proofline",
+  "version": "0.1.0",
+  "description": "Contract-first orchestrator for coding agents: every requirement gets a proof, and nothing is done until the proof passes.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "proofline": "dist/src/cli.js"
+  },
+  "files": [
+    "dist/src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "test": "tsc -p . && node --test dist/test/*.test.js",
+    "prepare": "tsc -p ."
+  },
+  "keywords": [
+    "agents",
+    "orchestrator",
+    "claude-code",
+    "prd",
+    "acceptance-criteria",
+    "verification"
+  ],
+  "dependencies": {
+    "yaml": "^2.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "typescript": "^5.6.3"
+  }
+}

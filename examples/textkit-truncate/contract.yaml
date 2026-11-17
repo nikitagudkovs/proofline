@@ -1,0 +1,17 @@
+goal: Add a truncate(text, max) helper that shortens long strings with an ellipsis.
+out_of_scope:
+  - Word-boundary aware truncation
+  - Changes to capitalize
+criteria:
+  - id: C1
+    text: truncate('hello world', 8) returns 'hello w…' (never longer than max, ends with one ellipsis character)
+    proof: { command: "node --test test/truncate.test.js" }
+  - id: C2
+    text: A string no longer than max is returned unchanged
+    proof: { command: "node --input-type=module -e \"import {truncate} from './src/index.js'; import assert from 'node:assert/strict'; assert.equal(truncate('short', 10), 'short'); assert.equal(truncate('exact', 5), 'exact');\"" }
+  - id: C3
+    text: truncate throws a RangeError when max is less than 1
+    proof: { review: "Does truncate in src/index.js throw a RangeError (not a generic Error) when max is less than 1, and does a test assert it?" }
+  - id: C4
+    text: The README API section documents truncate with an example
+    proof: { review: "Does the API section of README.md list truncate(text, max) and show an example call with its result?" }

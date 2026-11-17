@@ -1,0 +1,12 @@
+contract_hash: d7df10b87716a087
+tasks:
+  - id: T1
+    title: truncate and its tests
+    covers: [C1, C2, C3]
+    needs: []
+    brief: Add truncate(text, max) to src/index.js and tests in test/truncate.test.js.
+  - id: T2
+    title: README entry
+    covers: [C4]
+    needs: []
+    brief: Add truncate(text, max) to the API section of README.md with an example. Do not touch source files.
