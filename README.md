@@ -139,6 +139,7 @@ proofline approve
 proofline plan
 $EDITOR .proofline/plan.yaml         # optional
 proofline run
+proofline review                     # optional: one independent read of the whole change
 proofline ship
 ```
 
@@ -193,6 +194,7 @@ The contract, plan and report of that run are in [examples/shop-greeting](exampl
 
 A proven run is a branch and a report. What happens next is usually the same few steps every time, so they are buttons on the run screen (and commands):
 
+- **Review the change** (`review`): one more agent, read-only and independent, reads the whole change for what no line of the contract asked about. See below.
 - **Open the pull request** (`ship`): one per repository, into the branch that repository was on.
 - **Merge** (`merge`): merges those pull requests where they point. Only a proven run merges.
 - **Your own last mile** (`action "<name>"`): commands from your settings, offered as buttons once the run is far enough along. Deploying, updating a tracker, posting to a channel: proofline does not know how your team does these, so it runs what you tell it to and records whether it worked.
@@ -211,6 +213,24 @@ actions:
 ```
 
 An action runs from the folder proofline was started in, with `PROOFLINE_RUN`, `PROOFLINE_STATUS`, `PROOFLINE_BRANCH`, `PROOFLINE_ROOT`, `PROOFLINE_REPORT` and `PROOFLINE_STATE` (the run's record as JSON), plus `PROOFLINE_REPOS`, `PROOFLINE_BASES` and `PROOFLINE_PRS`, one line per repository. Actions live in the settings file only: the control room can press them, never edit them or supply a command of its own.
+
+#### A review of the whole change
+
+A contract proves what somebody thought to write down. It says nothing about the query that runs once per row, the error that is swallowed, or the test that would pass with the feature removed. **Review the change** asks one agent to read the full diff, across every repository of a workspace, with the code around it and the repository's own written rules, and to report only what it can point to:
+
+- each finding has a file and line, what is wrong and why it matters, and one of three weights: **blocker** (do not merge as it is), **fix soon**, **note**;
+- the reviewer did not build the change and never sees the builders' reasoning, and it has read-only tools;
+- your own checklist goes in the settings (`reviewInstructions`), and the reviewer can run on a stronger model than the verifiers (`models.reviewer`).
+
+The findings appear on the run screen, in the report and so in the pull request. From there it is your call: **Send the findings back to a builder** (`review --fix`) hands the blockers and the fix-soon items to one builder, merges what it changes, proves every line of the contract again and updates an open pull request. Or merge as it is: a review informs the person who merges, it never changes whether a run is proven. That is deliberate. A command that exits non-zero is a fact; a reviewer's finding is a well-argued opinion, and an opinion should not be able to block or pass a delivery by itself.
+
+```yaml
+models:
+  reviewer: opus
+reviewInstructions: |
+  Every new endpoint checks that the record belongs to the signed-in account.
+  New text is added to every locale file.
+```
 
 ### The contract
 
@@ -246,6 +266,7 @@ models:               # alias or id per role; empty = your Claude Code default
   planner: opus
   builder: sonnet
   verifier: sonnet
+  reviewer: opus      # reads the whole change on request; empty = the verifier's model
 claudeArgs: []        # extra arguments for every agent, e.g. ["--setting-sources", "project"]
 ```
 
@@ -277,7 +298,7 @@ A single task can use a different model from the other builders: set `model:` on
 
 **State on disk, not in a conversation.** Every transition is written to `.proofline/runs/<id>/state.json`. Kill a run, hit a usage limit, close the laptop: `proofline run --resume` picks up with the merged work intact and rebuilds only what was unfinished.
 
-**Small surface.** The orchestrator and its server are about 3,400 lines of TypeScript with one runtime dependency (a YAML parser); the control room is about 1,900 lines of React, built ahead of time. The agent runtime sits behind a single-method interface, [`Engine`](src/engine.ts), which is also how the test suite runs whole orchestrations, and the server's API, with scripted agents and real git, in a few seconds and without spending a token.
+**Small surface.** The orchestrator and its server are about 4,000 lines of TypeScript with one runtime dependency (a YAML parser); the control room is about 2,000 lines of React, built ahead of time. The agent runtime sits behind a single-method interface, [`Engine`](src/engine.ts), which is also how the test suite runs whole orchestrations, and the server's API, with scripted agents and real git, in a few seconds and without spending a token.
 
 More in [docs/design.md](docs/design.md).
 
@@ -296,7 +317,7 @@ npm install
 npm test
 ```
 
-The tests in [`test/run.test.ts`](test/run.test.ts) are the best tour of the behaviour: a builder that falsely reports "done" and is caught by its proof, two tasks that collide, a run that is stopped or interrupted and resumed, and a contract edited mid-run. [`test/workspace.test.ts`](test/workspace.test.ts) does the same for a delivery across two repositories. [`test/server.test.ts`](test/server.test.ts) drives the control room's API the same way.
+The tests in [`test/run.test.ts`](test/run.test.ts) are the best tour of the behaviour: a builder that falsely reports "done" and is caught by its proof, two tasks that collide, a run that is stopped or interrupted and resumed, and a contract edited mid-run. [`test/workspace.test.ts`](test/workspace.test.ts) does the same for a delivery across two repositories. [`test/server.test.ts`](test/server.test.ts) drives the control room's API the same way, and [`test/review.test.ts`](test/review.test.ts) covers the review of a whole change and sending its findings back.
 
 To rebuild the recorded demo from a run of your own: finish a run with `proofline ui` open, then `node scripts/export-demo.mjs` and `node scripts/build-demo.mjs`.
 

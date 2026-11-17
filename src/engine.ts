@@ -26,6 +26,8 @@ export interface AgentRequest {
   write: boolean;
   /** Overrides the model configured for the role, e.g. a per-task choice. */
   model?: string;
+  /** Minutes before the run is given up on, when the role's own limit does not fit. */
+  timeoutMin?: number;
   /** Folders outside `cwd` the agent may also read, e.g. the other repositories of a workspace. */
   addDirs?: string[];
   onEvent?: (event: AgentEvent) => void;
@@ -159,7 +161,7 @@ export class ClaudeCodeEngine implements Engine {
   ) {}
 
   async run<T>(req: AgentRequest): Promise<AgentResult<T>> {
-    const minutes = { planner: this.cfg.timeouts.plannerMin, builder: this.cfg.timeouts.builderMin, verifier: this.cfg.timeouts.verifierMin }[req.role];
+    const minutes = req.timeoutMin ?? { planner: this.cfg.timeouts.plannerMin, builder: this.cfg.timeouts.builderMin, verifier: this.cfg.timeouts.verifierMin }[req.role];
     let result = '';
     const r = await exec(this.bin, claudeArgs(req, this.cfg), {
       cwd: req.cwd,

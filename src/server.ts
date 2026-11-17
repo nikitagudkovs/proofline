@@ -19,7 +19,7 @@ import {
   serializeContract,
 } from './contract.js';
 import { doctor, type Check } from './doctor.js';
-import { mergeRun, purgeRun, reached, runAction } from './finish.js';
+import { fixReview, mergeRun, purgeRun, reached, reviewRun, runAction } from './finish.js';
 import { ClaudeCodeEngine, type Engine } from './engine.js';
 import { loadPlan, planPath, planProblems, savePlan, waves } from './plan.js';
 import { writeReport } from './report.js';
@@ -41,7 +41,7 @@ export interface ServerOptions {
 }
 
 interface Job {
-  kind: 'contract' | 'plan' | 'run' | 'verify' | 'ship' | 'merge' | 'action' | 'clean';
+  kind: 'contract' | 'plan' | 'run' | 'verify' | 'ship' | 'review' | 'merge' | 'action' | 'clean';
   runId: string;
   startedAt: string;
   abort: AbortController;
@@ -391,6 +391,29 @@ export async function startServer(root: string, opts: ServerOptions) {
         start('ship', state.id, async (ctx) => {
           const urls = await shipRun(ctx, state, !!body.draft);
           for (const url of urls.split('\n')) ctx.log(`pull request opened: ${url}`);
+        });
+        return { id: state.id };
+      },
+    ],
+    [
+      'POST',
+      /^\/api\/runs\/([\w-]+)\/review$/,
+      (m) => {
+        const state = loadState(root, m[1]);
+        start('review', state.id, async (ctx) => {
+          await reviewRun(ctx, state);
+        });
+        return { id: state.id };
+      },
+    ],
+    [
+      'POST',
+      /^\/api\/runs\/([\w-]+)\/review\/fix$/,
+      (m, body) => {
+        const state = loadState(root, m[1]);
+        if (!state.review) throw new HttpError(409, 'This run has not been reviewed yet.');
+        start('run', state.id, async (ctx) => {
+          await fixReview(ctx, state, body.all !== false);
         });
         return { id: state.id };
       },

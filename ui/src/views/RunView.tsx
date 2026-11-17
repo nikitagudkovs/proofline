@@ -48,6 +48,16 @@ export function RunScreen({ shell, runId }: { shell: Shell; runId?: string }) {
   const ranOk = (name: string) => [...(state.actions ?? [])].reverse().find((a) => a.name === name)?.ok;
   const idle = !shell.busy && !readOnly;
 
+  // The review of the whole change: one more pair of eyes, asked for by a person.
+  const review = state.review;
+  const reviewing = ov.job?.runId === state.id && ov.job.kind === 'review';
+  const reviewer = latest(run, 'REVIEW');
+  const blockers = review?.findings.filter((f) => f.severity === 'blocker').length ?? 0;
+  const fixable = review?.findings.filter((f) => f.severity !== 'note').length ?? 0;
+  const lastHead = state.rounds[state.rounds.length - 1]?.head;
+  const reviewStale = !!review && !review.sentBack && !!lastHead && lastHead !== review.head;
+  const canReview = idle && run.current && !state.cleaned && state.rounds.length > 0;
+
   const planned = run.current ? (ov.plan.plan?.tasks ?? []) : [];
   const known = new Set(planned.map((t) => t.id));
   const waves: Task[][] = planned.length ? toWaves(planned.filter((t) => state.tasks[t.id])) : [];
@@ -125,8 +135,21 @@ export function RunScreen({ shell, runId }: { shell: Shell; runId?: string }) {
       {(stage.shipped || actions.length > 0 || (idle && state.rounds.length > 0)) && !readOnly && (
         <div className="finish">
           <span className="label">Finish</span>
+          {canReview && (
+            <button className={`btn${!review && stage.proven ? ' btn-primary' : ''}`} onClick={() => act(() => api.review(state.id))}>
+              {review ? 'Review again' : 'Review the change'}
+            </button>
+          )}
           {stage.shipped && stage.proven && !stage.merged && (
-            <button className="btn btn-primary" disabled={!idle} onClick={() => confirm(`Merge ${state.repos ? 'the pull requests' : 'the pull request'} into ${bases}?`) && act(() => api.merge(state.id))}>
+            <button
+              className={`btn${review && blockers === 0 ? ' btn-primary' : ''}`}
+              disabled={!idle}
+              onClick={() =>
+                confirm(
+                  `${blockers > 0 && !review?.sentBack ? `The review found ${blockers} blocker${blockers === 1 ? '' : 's'} that ${blockers === 1 ? 'was' : 'were'} not sent back. ` : ''}Merge ${state.repos ? 'the pull requests' : 'the pull request'} into ${bases}?`,
+                ) && act(() => api.merge(state.id))
+              }
+            >
               Merge into {bases}
             </button>
           )}
@@ -149,6 +172,65 @@ export function RunScreen({ shell, runId }: { shell: Shell; runId?: string }) {
             </button>
           )}
         </div>
+      )}
+
+      {(review || reviewing) && (
+        <Section
+          title="Review of the whole change"
+          aside={<span className="muted">One independent read for what no line of the contract asked about. It informs you; it is not a proof.</span>}
+        >
+          {reviewing && (
+            <button className="review-live" onClick={() => reviewer && shell.openSession(state.id, reviewer.id)}>
+              <Pill status="running">reading the change</Pill>
+              <span className="mono clip muted">{reviewer?.lastActivity}</span>
+            </button>
+          )}
+          {review && !reviewing && (
+            <>
+              <div className="review-head">
+                <Pill status={review.verdict === 'approve' ? 'pass' : 'fail'}>{review.verdict === 'approve' ? 'no blockers' : `${blockers} blocker${blockers === 1 ? '' : 's'}`}</Pill>
+                <span>{review.summary}</span>
+              </div>
+              {review.sentBack && (
+                <div className="notice">
+                  These findings went back to a builder ({review.sentBack}) and the contract was checked again. Review again to see what is left.
+                </div>
+              )}
+              {reviewStale && <div className="notice notice-warn">The code changed after this review. Review again before relying on it.</div>}
+              <ol className="findings">
+                {review.findings.map((f, i) => (
+                  <li key={i} className="finding">
+                    <span className={`sev sev-${f.severity}`}>{f.severity === 'blocker' ? 'Blocker' : f.severity === 'should' ? 'Fix soon' : 'Note'}</span>
+                    <span className="finding-body">
+                      <span className="mono finding-where">{f.where}</span>
+                      <span>{f.what}</span>
+                      <span className="muted">{f.why}</span>
+                    </span>
+                  </li>
+                ))}
+              </ol>
+              {review.findings.length === 0 && <p className="muted">Nothing a person needs to look at before merging.</p>}
+              <div className="row">
+                {fixable > 0 && !review.sentBack && !stage.merged && canReview && (
+                  <button
+                    className="btn btn-primary"
+                    onClick={() =>
+                      confirm(`Send ${fixable} finding${fixable === 1 ? '' : 's'} back to a builder? The contract is checked again afterwards${stage.shipped ? ' and the pull request is updated' : ''}.`) &&
+                      act(() => api.fixReview(state.id, true))
+                    }
+                  >
+                    Send {fixable === 1 ? 'the finding' : `the ${fixable} findings`} back to a builder
+                  </button>
+                )}
+                {reviewer && (
+                  <button className="btn" onClick={() => shell.openSession(state.id, reviewer.id)}>
+                    Open the reviewer's session
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+        </Section>
       )}
 
       {!run.current && <div className="notice notice-warn">The contract has changed since this run. It is shown as a record; start a new run for the new contract.</div>}

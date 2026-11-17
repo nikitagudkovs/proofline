@@ -4,10 +4,12 @@ import type { ActionConfig, Stage } from './config.js';
 import { loadApprovedContract } from './contract.js';
 import { loadPlan } from './plan.js';
 import { writeReport } from './report.js';
-import { cleanRun, type Ctx } from './runner.js';
+import { CHANGE_REVIEW_SCHEMA, changeReviewPrompt, findingsFixPrompt } from './prompts.js';
+import { attemptBuild, cleanRun, ensureIntegration, integrationDir, integrationRepo, mergeOrFail, newTaskState, repoNames, type Ctx } from './runner.js';
 import { repoRuns, runDir, saveState, sessionsDir } from './state.js';
-import type { RunState } from './types.js';
-import { exec, gitTry, tail } from './util.js';
+import type { Finding, Review, RunState } from './types.js';
+import { exec, git, gitTry, tail } from './util.js';
+import { verifyRun } from './verify.js';
 
 /** How far a run has come, for deciding which finishing steps are on offer. */
 export function reached(state: RunState, stage: Stage): boolean {
@@ -136,4 +138,122 @@ export async function purgeRun(ctx: Ctx, state: RunState): Promise<string[]> {
       : 'cleaned up: working copies, session records and local branches removed',
   );
   return kept;
+}
+
+/** The most a reviewer is handed inline. A larger change is cut here and read from the files instead. */
+const DIFF_LIMIT = 150_000;
+
+/**
+ * One independent read of the whole change, on request: what the contract's lines could not see.
+ * It never blocks anything by itself. A person reads the findings and decides.
+ */
+export async function reviewRun(ctx: Ctx, state: RunState): Promise<Review> {
+  if (state.cleaned) throw new Error('This run was cleaned up, so there is nothing left to review here.');
+  const { contract, hash } = loadApprovedContract(ctx.root);
+  if (hash !== state.contractHash) throw new Error(`The contract changed since run ${state.id}. A review is of the current contract's run.`);
+  await ensureIntegration(ctx, state);
+
+  const parts: string[] = [];
+  const heads: string[] = [];
+  for (const [i, repo] of ctx.repos.entries()) {
+    const dir = integrationRepo(state, repo);
+    heads.push(await git(dir, 'rev-parse', 'HEAD'));
+    // With the folder as a prefix, every path in the diff reads as it does from where the reviewer stands.
+    const prefix = repo.name ? [`--src-prefix=a/${repo.name}/`, `--dst-prefix=b/${repo.name}/`] : [];
+    const diff = await git(dir, 'diff', ...prefix, `${repoRuns(state)[i].baseSha}..HEAD`);
+    if (diff) parts.push(diff);
+  }
+  let diff = parts.join('\n');
+  if (diff.length > DIFF_LIMIT) {
+    diff = `${diff.slice(0, DIFF_LIMIT)}\n[The change is larger than fits here and was cut at this point. Read the remaining changed files directly.]`;
+  }
+
+  ctx.log('reviewing the change as a whole');
+  const res = await ctx.engine.run<{ verdict: string; summary: string; findings?: Finding[] }>({
+    role: 'verifier',
+    label: 'REVIEW',
+    cwd: integrationDir(state),
+    prompt: changeReviewPrompt(contract, diff, repoNames(ctx), ctx.cfg.reviewInstructions),
+    schema: CHANGE_REVIEW_SCHEMA,
+    write: false,
+    model: ctx.cfg.models.reviewer || undefined,
+    timeoutMin: ctx.cfg.timeouts.reviewerMin,
+    signal: ctx.signal,
+  });
+  ctx.track(state, 'verifier', res);
+
+  const order = { blocker: 0, should: 1, note: 2 };
+  const findings = (res.output.findings ?? [])
+    .filter((f) => f && f.what)
+    .map((f) => ({ ...f, severity: f.severity in order ? f.severity : 'note' }) as Finding)
+    .sort((a, b) => order[a.severity] - order[b.severity]);
+  const review: Review = {
+    at: new Date().toISOString(),
+    head: state.repos ? ctx.repos.map((r, i) => `${r.name}@${heads[i].slice(0, 7)}`).join(' ') : heads[0],
+    // The verdict follows from the findings, whatever the reviewer called it.
+    verdict: findings.some((f) => f.severity === 'blocker') ? 'changes' : 'approve',
+    summary: res.output.summary,
+    findings,
+  };
+  state.review = review;
+  saveState(ctx.root, state);
+  writeReport(ctx.root, state, contract, loadPlan(ctx.root));
+  const count = (s: Finding['severity']) => findings.filter((f) => f.severity === s).length;
+  ctx.log(`review: ${review.verdict === 'approve' ? 'no blockers' : `${count('blocker')} blocker${count('blocker') === 1 ? '' : 's'}`}, ${count('should')} to fix soon, ${count('note')} notes`);
+  return review;
+}
+
+/**
+ * Hand the reviewer's findings to one builder, merge what it changes, and prove the whole
+ * contract again. `all` includes the "fix soon" ones; notes are never sent.
+ */
+export async function fixReview(ctx: Ctx, state: RunState, all = true): Promise<string> {
+  const review = state.review;
+  if (!review) throw new Error('This run has not been reviewed yet.');
+  if (review.sentBack) throw new Error(`These findings already went back (${review.sentBack}). Review again to see what is left.`);
+  if (state.merged || repoRuns(state).some((r) => r.merged)) throw new Error('This run is already merged. Fix what is left in a new run.');
+  const findings = review.findings.filter((f) => f.severity === 'blocker' || (all && f.severity === 'should'));
+  if (findings.length === 0) throw new Error('The review found nothing to send back.');
+  const { contract, hash } = loadApprovedContract(ctx.root);
+  if (hash !== state.contractHash) throw new Error(`The contract changed since run ${state.id}. Start a new run for the new contract.`);
+  const plan = loadPlan(ctx.root);
+  await ensureIntegration(ctx, state);
+
+  const name = `RFIX${Object.keys(state.tasks).filter((k) => k.startsWith('RFIX')).length + 1}`;
+  const fix = (state.tasks[name] = newTaskState(name, `Fix ${findings.length} review finding${findings.length === 1 ? '' : 's'}`, []));
+  ctx.log(`sending ${findings.length} review finding${findings.length === 1 ? '' : 's'} back (${name})`);
+  try {
+    await attemptBuild(ctx, state, fix, findingsFixPrompt(contract, findings, repoNames(ctx)), ctx.cfg.models.builder, ctx.repos);
+  } catch (e) {
+    // Stopped half-way: nothing was merged, so the findings can be sent again.
+    fix.status = 'failed';
+    fix.error = 'stopped before it finished';
+    saveState(ctx.root, state);
+    throw e;
+  }
+  if (fix.status !== 'built' || fix.commits.length === 0) {
+    fix.status = 'failed';
+    fix.error ??= 'the fix changed nothing';
+    saveState(ctx.root, state);
+    writeReport(ctx.root, state, contract, plan);
+    throw new Error(`${name}: ${fix.error}`);
+  }
+  if (!(await mergeOrFail(ctx, state, fix))) throw new Error(`${name} could not be merged: ${fix.error ?? 'conflict'}`);
+  review.sentBack = name;
+
+  // The fix is new code, so the contract's own lines are proven again before anything else.
+  const round = await verifyRun(ctx, state, contract);
+  state.status = round.results.every((r) => r.verdict === 'pass') ? 'proven' : 'unproven';
+  state.finishedAt = new Date().toISOString();
+  saveState(ctx.root, state);
+  writeReport(ctx.root, state, contract, plan);
+
+  // An open pull request should show what is now on the branch.
+  for (const run of repoRuns(state).filter((r) => r.prUrl)) {
+    const repo = ctx.repos.find((r) => r.name === run.name);
+    if (!repo) continue;
+    const pushed = await gitTry(repo.root, 'push', 'origin', state.branch);
+    ctx.log(pushed === null ? `${run.name ? `${run.name}: ` : ''}could not push the fix to ${run.prUrl}; push ${state.branch} by hand` : `${run.name ? `${run.name}: ` : ''}pull request updated`);
+  }
+  return name;
 }

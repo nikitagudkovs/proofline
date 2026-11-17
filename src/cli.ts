@@ -7,7 +7,7 @@ import { draftContract, draftPlan } from './authoring.js';
 import { CONFIG_TEMPLATE, configPath, findWorkspace, loadConfig, workspaceTemplate } from './config.js';
 import { DIR, approveContract, contractPath, lintContract, loadApprovedContract, loadContract, renderContract } from './contract.js';
 import { doctor } from './doctor.js';
-import { mergeRun, purgeRun, runAction } from './finish.js';
+import { fixReview, mergeRun, purgeRun, reviewRun, runAction } from './finish.js';
 import { ClaudeCodeEngine } from './engine.js';
 import { loadPlan, planPath, renderPlan, validatePlan } from './plan.js';
 import { writeReport } from './report.js';
@@ -35,6 +35,8 @@ const HELP = `proofline: a contract-first orchestrator for coding agents
   proofline verify              run the proofs again on an existing run
   proofline report              print the path of the report
   proofline ship                push the branch and open a pull request with the report
+  proofline review              one independent read of the whole change, beyond the contract
+  proofline review --fix        send the last review's findings back to a builder, then prove the contract again
   proofline merge               merge the run's pull requests into the branches they target
   proofline action "<name>"     run a finishing action from the settings (deploy, update a tracker, ...)
   proofline clean               remove a run's worktrees (branch and records stay)
@@ -63,6 +65,7 @@ const { values: flags, positionals } = parseArgs({
     draft: { type: 'boolean', default: false },
     repos: { type: 'string' },
     all: { type: 'boolean', default: false },
+    fix: { type: 'boolean', default: false },
     port: { type: 'string' },
     host: { type: 'string' },
     'no-open': { type: 'boolean', default: false },
@@ -278,6 +281,19 @@ const commands: Record<string, (ctx: Ctx) => Promise<number>> = {
     await new Promise<void>((resolve) => process.once('SIGINT', resolve));
     await server.close();
     return 0;
+  },
+
+  async review(ctx) {
+    const state = pickRun(ctx.root);
+    if (flags.fix) {
+      const name = await fixReview(recorded(ctx, state.id), state);
+      console.log(`\n${name} merged. The run is ${state.status === 'proven' ? green('proven') : red('not proven')} after the fix.`);
+      return state.status === 'proven' ? 0 : 2;
+    }
+    const review = await reviewRun(recorded(ctx, state.id), state);
+    console.log(`\n${bold(review.verdict === 'approve' ? green('No blockers') : red('Changes needed'))}  ${review.summary}\n`);
+    for (const f of review.findings) console.log(`  ${f.severity === 'blocker' ? red('blocker') : f.severity === 'should' ? paint(33, 'fix soon') : dim('note')}  ${f.where}\n    ${f.what} ${f.why}`);
+    return review.verdict === 'approve' ? 0 : 2;
   },
 
   async merge(ctx) {

@@ -1,4 +1,4 @@
-import type { Contract, Criterion, ProofResult, Task } from './types.js';
+import type { Contract, Criterion, Finding, ProofResult, Task } from './types.js';
 
 const str = { type: 'string' } as const;
 const strList = { type: 'array', items: str } as const;
@@ -77,6 +77,23 @@ export const REVIEW_SCHEMA = {
     evidence: str,
   },
   required: ['verdict', 'evidence'],
+};
+
+export const CHANGE_REVIEW_SCHEMA = {
+  type: 'object',
+  properties: {
+    verdict: { type: 'string', enum: ['approve', 'changes'] },
+    summary: str,
+    findings: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { severity: { type: 'string', enum: ['blocker', 'should', 'note'] }, where: str, what: str, why: str },
+        required: ['severity', 'where', 'what', 'why'],
+      },
+    },
+  },
+  required: ['verdict', 'summary', 'findings'],
 };
 
 export interface BuildOutput {
@@ -250,4 +267,67 @@ Rules:
 - Give no credit for intent, comments or TODOs.
 
 "evidence": one to four sentences with file:line references that justify the verdict.`;
+}
+
+/**
+ * A read of the change as a whole. The contract's lines have their own proofs;
+ * this looks for what no line asked about.
+ */
+export function changeReviewPrompt(contract: Contract, diff: string, repos: string[] = [], instructions = ''): string {
+  const where = repos.length
+    ? `The change spans ${repos.length} repositories, the folders ${folders(repos)} below the current directory, each with all of its work merged.`
+    : 'The change is merged in the repository in the current directory.';
+  return `You are reviewing a finished change before a person merges it. You did not build it and you have not seen the builders' reasoning. ${where}
+
+What it was meant to do: ${contract.goal}
+${contract.outOfScope.length ? `Deliberately out of scope: ${contract.outOfScope.join('; ')}\n` : ''}
+Its acceptance criteria each have their own proof and are checked separately. Do not repeat that work. Your job is what those lines could not see:
+${contract.criteria.map((c) => `- ${c.id}: ${c.text}`).join('\n')}
+
+The change:
+\`\`\`diff
+${diff || '(nothing changed)'}
+\`\`\`
+
+Read the changed files in full, and the code around them that they call or that calls them. Read the repository's own written rules first (CLAUDE.md, CONTRIBUTING, AGENTS.md or similar, where they exist) and hold the change to them.
+
+Look for:
+- Behaviour that is wrong: a case the code mishandles, an error that is swallowed, a state that goes stale.
+- Data reaching someone who should not see it: another account, tenant or role.
+- Cost at real size: a query per row, an unbounded list, work repeated on every render or request.
+- Existing behaviour that this change breaks or silently alters.
+- Tests that would still pass if the feature were broken.
+- Leftovers: debug output, dead code, a file that does not belong.${repos.length ? '\n- The seam: one side sending or expecting something the other does not.' : ''}
+${instructions ? `\nThis team's own checklist, which carries the same weight:\n${instructions}\n` : ''}
+Rules:
+- Report only what you can point to: every finding names a file and line${repos.length ? ', starting with the repository folder' : ''}.
+- No style preferences and no praise. If it is not worth a person's attention before merging, leave it out.
+- "blocker": merging this as it is would cause harm or wrong results. "should": a real defect or risk that can follow in a later change. "note": worth knowing, no action needed.
+- Verdict "changes" if there is at least one blocker, otherwise "approve".
+
+"summary": two or three plain sentences on the state of the change.`;
+}
+
+/** For the builder who is handed a reviewer's findings. */
+export function findingsFixPrompt(contract: Contract, findings: Finding[], repos: string[] = []): string {
+  const where = repos.length
+    ? `in the repositories below this directory (${folders(repos)}, each a git worktree of its own)`
+    : 'in this git worktree';
+  const workspace = repos.length ? '\n- You may change any of the repositories. Commit inside each repository you change.' : '';
+  return `A delivery was built and merged ${where}, and every line of its contract is proven. An independent reviewer then read the whole change and found the problems below. Fix them.
+
+Goal of the whole delivery: ${contract.goal}
+${contract.outOfScope.length ? `Out of scope: ${contract.outOfScope.join('; ')}\n` : ''}
+Findings:
+${findings.map((f, i) => `${i + 1}. ${f.where}\n   ${f.what}\n   Why it matters: ${f.why}`).join('\n')}
+
+Rules:
+- Check each finding against the code first. A reviewer can be wrong: if one does not hold, leave the code alone and say why in "notes".
+- Fix what is found and nothing else. No refactoring on the way.
+- Where a fix changes behaviour, add or adjust a test for it.
+- Every line of the contract is verified again after your fix, so do not break one:
+${contract.criteria.map((c) => `  - ${c.id}: ${c.text}`).join('\n')}
+- Commit your work. Anything left uncommitted is committed for you.${workspace}
+
+Finish with "status" ("done" or "blocked"), "summary", "notes" (one line per finding: fixed, or why not) and "concerns".`;
 }

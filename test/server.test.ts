@@ -136,7 +136,7 @@ test('models and run settings are saved from the UI without touching other setti
   try {
     await call('PUT', '/api/config', { models: { builder: 'sonnet' }, concurrency: 5 });
     const { json } = await call('PUT', '/api/config', { models: { verifier: 'haiku' } });
-    assert.deepEqual(json.config.models, { planner: '', builder: 'sonnet', verifier: 'haiku' });
+    assert.deepEqual(json.config.models, { planner: '', builder: 'sonnet', verifier: 'haiku', reviewer: '' });
     assert.equal(json.config.concurrency, 5);
     assert.equal(json.config.maxFixRounds, 2);
   } finally {

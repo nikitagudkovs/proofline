@@ -8,6 +8,7 @@ const ROLES = [
   { id: 'planner', title: 'Planner', does: 'Reads the repository, drafts the contract and the plan. Read-only.' },
   { id: 'builder', title: 'Builders', does: 'Write the code, one per task. A task can override this in the plan.' },
   { id: 'verifier', title: 'Verifiers', does: 'Answer review proofs with file-and-line evidence. Read-only, independent.' },
+  { id: 'reviewer', title: 'Reviewer', does: 'Reads the whole change when you press Review, for what no line of the contract asked about. Read-only, independent.' },
 ] as const;
 
 const SETUP_HINT =
@@ -36,7 +37,7 @@ export function ModelsView({ shell }: { shell: Shell }) {
               <ModelSelect
                 id={`role-${r.id}`}
                 value={ov.config.models[r.id]}
-                inherit="Claude Code default"
+                inherit={r.id === 'reviewer' ? 'Same as the verifiers' : 'Claude Code default'}
                 disabled={readOnly}
                 onChange={(v) => save({ models: { ...ov.config.models, [r.id]: v } })}
               />

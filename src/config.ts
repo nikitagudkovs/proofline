@@ -67,12 +67,14 @@ export interface Config {
    * "inherit": pass the environment through untouched.
    */
   auth: 'subscription' | 'inherit';
-  /** Model alias or id per role. Empty means your Claude Code default. */
-  models: { planner: string; builder: string; verifier: string };
+  /** Model alias or id per role. Empty means your Claude Code default; an empty reviewer means the verifier's. */
+  models: { planner: string; builder: string; verifier: string; reviewer: string };
+  /** Extra instructions for the reviewer of a whole change: a team's own checklist. */
+  reviewInstructions: string;
   builder: { permissionMode: string; allowedTools: string[] };
   /** Extra arguments for every `claude` process, e.g. ["--setting-sources", "project"]. */
   claudeArgs: string[];
-  timeouts: { plannerMin: number; builderMin: number; verifierMin: number; commandSec: number };
+  timeouts: { plannerMin: number; builderMin: number; verifierMin: number; reviewerMin: number; commandSec: number };
 }
 
 export const DEFAULTS: Config = {
@@ -84,13 +86,14 @@ export const DEFAULTS: Config = {
   actions: [],
   worktreeDir: path.join(os.homedir(), '.proofline', 'worktrees'),
   auth: 'subscription',
-  models: { planner: '', builder: '', verifier: '' },
+  models: { planner: '', builder: '', verifier: '', reviewer: '' },
+  reviewInstructions: '',
   builder: {
     permissionMode: 'acceptEdits',
     allowedTools: ['Bash', 'Edit', 'Write', 'Read', 'Glob', 'Grep'],
   },
   claudeArgs: [],
-  timeouts: { plannerMin: 15, builderMin: 45, verifierMin: 10, commandSec: 600 },
+  timeouts: { plannerMin: 15, builderMin: 45, verifierMin: 10, reviewerMin: 25, commandSec: 600 },
 };
 
 export const configPath = (root: string) => path.join(root, DIR, 'config.yaml');
@@ -133,6 +136,7 @@ export function loadConfig(root: string): Config {
     repos: parseRepos(raw.repos),
     actions: parseActions(raw.actions),
     mergeMethod: ['squash', 'rebase'].includes(raw.mergeMethod) ? raw.mergeMethod : 'merge',
+    reviewInstructions: typeof raw.reviewInstructions === 'string' ? raw.reviewInstructions.trim() : '',
     models: { ...DEFAULTS.models, ...raw.models },
     builder: { ...DEFAULTS.builder, ...raw.builder },
     timeouts: { ...DEFAULTS.timeouts, ...raw.timeouts },
@@ -190,4 +194,11 @@ models:
   planner: ""
   builder: ""
   verifier: ""
+  # Reads the whole change when you press Review. Empty = the verifier's model.
+  reviewer: ""
+
+# Your own checklist for that review, on top of the built-in one. For example:
+# reviewInstructions: |
+#   Every new endpoint checks that the record belongs to the signed-in account.
+#   New text is added to every locale file.
 `;

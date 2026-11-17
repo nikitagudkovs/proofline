@@ -109,6 +109,14 @@ Opening and merging pull requests is the same everywhere, so those are built in,
 
 Two limits are deliberate. Actions can be pressed from the control room but are defined only in the file, so a request from a browser can never carry a command. And nothing with consequences outside the repository happens by default: an action runs by itself only where the settings say `auto`.
 
+### A review is advice, a proof is a fact
+
+The contract cannot see what nobody wrote down, so a person can ask for one read of the whole change: a single read-only agent on the integration copy, given the full diff (paths prefixed with the repository folder in a workspace, so they read as they do from where it stands), the contract for context and the team's own checklist from the settings. It is told not to repeat the per-line proofs and to report only findings with a file and line.
+
+Its output is kept apart from the verdicts on purpose. `state.review` never touches `state.status`: a run is proven by its proofs alone, and the verdict shown ("no blockers" or "changes needed") is computed from the findings, not taken from the reviewer's own word. A reviewer that could fail a run would make the run's outcome depend on an opinion, which is the thing the contract exists to avoid.
+
+Sending findings back reuses the build path: one builder with every repository writable (`RFIXn`), merged like any task, followed by a full verification round, because a fix is new code. If a pull request is already open its branch is pushed again. The same findings are not sent twice; a second review shows what is left. A review made before the code last changed is marked as such instead of being dropped.
+
 Cleaning up removes what can be rebuilt (working copies, session records, evidence logs) and what is safely elsewhere (branches that are merged or pushed). A branch that exists nowhere else is kept.
 
 ## State and resume

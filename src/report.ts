@@ -62,6 +62,18 @@ function origin(state: RunState, code: (s: string) => string): string {
 const pullRequests = (state: RunState) => repoRuns(state).filter((r) => r.prUrl) as { name: string; prUrl: string }[];
 const inRepo = (t: TaskState) => (t.repo ? ` [${t.repo}]` : '');
 
+const SEVERITY = { blocker: 'Blocker', should: 'Fix soon', note: 'Note' };
+
+/** What happened to a review after it was written, if anything. */
+function reviewNote(state: RunState): string {
+  const r = state.review;
+  if (!r) return '';
+  const last = state.rounds[state.rounds.length - 1];
+  if (r.sentBack) return `These findings went back to a builder (${r.sentBack}) and the contract was proven again afterwards. The list shows what was found, not what is left.`;
+  if (last && last.head !== r.head) return 'The code changed after this review.';
+  return '';
+}
+
 const proofLabel = (c: Criterion) => (c.proof.type === 'command' ? `command \`${c.proof.run}\`` : 'independent review');
 const mark = (r?: ProofResult) => (!r ? '➖' : r.verdict === 'pass' ? '✅' : '❌');
 const cell = (s: string) => s.replace(/\|/g, '\\|').replace(/\n/g, ' ');
@@ -105,6 +117,16 @@ export function renderMarkdown(state: RunState, contract: Contract, plan: Plan):
     out.push(
       `| **${t.id}**${inRepo(t)} ${cell(t.title)}${needs.length ? ` (after ${needs.join(', ')})` : ''} | ${t.status} | ${t.attempts} | ${t.commits.length} | ${cell(t.error ?? t.summary ?? '')} |`,
     );
+  }
+
+  if (state.review) {
+    const r = state.review;
+    out.push('', '## Review of the whole change', '');
+    out.push(`**${r.verdict === 'approve' ? 'No blockers' : 'Changes needed'}** at \`${shortHead(r.head)}\`. ${r.summary}`, '');
+    if (reviewNote(state)) out.push(`_${reviewNote(state)}_`, '');
+    for (const f of r.findings) out.push(`- **${SEVERITY[f.severity]}** \`${f.where}\`: ${f.what} ${f.why}`);
+    if (r.findings.length === 0) out.push('_The reviewer found nothing a person needs to look at before merging._');
+    out.push('', '_One independent read beyond the contract. It informs the person who merges; it is not a proof._');
   }
 
   const concerns = Object.values(state.tasks).flatMap((t) => (t.concerns ?? []).map((c) => `- **${t.id}**: ${c}`));
@@ -168,6 +190,12 @@ export function renderHtml(state: RunState, contract: Contract, plan: Plan): str
   );
   const concerns = concernItems.length
     ? `\n  <h2>Concerns about the contract, raised by builders</h2>\n  <ul>${concernItems.join('')}</ul>\n`
+    : '';
+
+  const review = state.review
+    ? `\n  <h2>Review of the whole change</h2>\n  <p class="goal"><span class="pill ${state.review.verdict === 'approve' ? 'pass' : 'fail'}">${state.review.verdict === 'approve' ? 'no blockers' : 'changes needed'}</span> ${esc(state.review.summary)}</p>${reviewNote(state) ? `\n  <p class="muted">${esc(reviewNote(state))}</p>` : ''}\n  <ul class="caught">${state.review.findings
+        .map((f) => `<li><span class="pill ${f.severity === 'blocker' ? 'fail' : 'none'}">${SEVERITY[f.severity]}</span> <code>${esc(f.where)}</code><pre>${esc(`${f.what} ${f.why}`)}</pre></li>`)
+        .join('')}</ul>\n  <p class="muted">One independent read beyond the contract. It informs the person who merges; it is not a proof.</p>\n`
     : '';
 
   const caughtItems = caught(state).map(
@@ -265,7 +293,7 @@ ${sentBack}
 ${tasks}
     </tbody>
   </table></div>
-${concerns}
+${concerns}${review}
   <h2>Agent usage</h2>
   <div class="scroll"><table>
     <thead><tr><th>Role</th><th>Runs</th><th>Turns</th><th>Agent time</th><th>List-price equivalent</th></tr></thead>

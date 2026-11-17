@@ -25,7 +25,7 @@ export interface RunSummary {
 export interface Overview {
   /** `repos` lists the repositories of a workspace; it is empty when this folder is the one repository. */
   repo: { name: string; root: string; repos?: string[] };
-  job: { kind: 'contract' | 'plan' | 'run' | 'verify' | 'ship' | 'merge' | 'action' | 'clean'; runId: string; startedAt: string } | null;
+  job: { kind: 'contract' | 'plan' | 'run' | 'verify' | 'ship' | 'review' | 'merge' | 'action' | 'clean'; runId: string; startedAt: string } | null;
   lastError: string;
   config: Config;
   accounts: Check[];

@@ -100,6 +100,28 @@ export interface RepoRun {
   merged?: boolean;
 }
 
+/** Something a reviewer found in the change as a whole, beyond the contract's own lines. */
+export interface Finding {
+  /** blocker: do not merge as it is. should: fix soon. note: worth knowing. */
+  severity: 'blocker' | 'should' | 'note';
+  /** file:line, with the repository folder in a workspace. */
+  where: string;
+  what: string;
+  why: string;
+}
+
+/** The latest review of the whole change. Pressing Review again replaces it. */
+export interface Review {
+  at: string;
+  /** Commit(s) that were reviewed, as in a verification round. */
+  head: string;
+  verdict: 'approve' | 'changes';
+  summary: string;
+  findings: Finding[];
+  /** Set when the findings were handed to a builder: the name of that task. */
+  sentBack?: string;
+}
+
 /** One time a finishing action from the settings was run for a run. */
 export interface ActionResult {
   name: string;
@@ -137,6 +159,8 @@ export interface RunState {
   prUrl?: string;
   /** Single repository: the pull request was merged from here. A workspace keeps this per repository. */
   merged?: boolean;
+  /** A reviewer's read of the whole change, when one was asked for. */
+  review?: Review;
   /** Finishing actions that were run, newest last. */
   actions?: ActionResult[];
   /** Working copies and session records were removed; the report and this record stay. */

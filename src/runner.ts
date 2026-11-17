@@ -138,7 +138,7 @@ export async function createRun(ctx: Ctx): Promise<RunState> {
   return state;
 }
 
-function newTaskState(id: string, title: string, covers: string[], repo?: string): TaskState {
+export function newTaskState(id: string, title: string, covers: string[], repo?: string): TaskState {
   return { id, title, covers, status: 'pending', attempts: 0, commits: [], ...(repo ? { repo } : {}) };
 }
 
@@ -205,7 +205,7 @@ async function execute(ctx: Ctx, state: RunState): Promise<RunState> {
   return state;
 }
 
-async function ensureIntegration(ctx: Ctx, state: RunState): Promise<void> {
+export async function ensureIntegration(ctx: Ctx, state: RunState): Promise<void> {
   for (const repo of ctx.repos) {
     const dir = integrationRepo(state, repo);
     if (existsSync(path.join(dir, '.git'))) continue;
@@ -298,7 +298,7 @@ async function prepare(ctx: Ctx, repo: Repo, dir: string): Promise<string[]> {
  * Run one builder in fresh worktrees off the integration branch. Sets the task to built or failed.
  * `writable` is the repositories it may change: the task's own, or all of them for a fix.
  */
-async function attemptBuild(ctx: Ctx, state: RunState, ts: TaskState, prompt: string, model: string | undefined, writable: Repo[]): Promise<void> {
+export async function attemptBuild(ctx: Ctx, state: RunState, ts: TaskState, prompt: string, model: string | undefined, writable: Repo[]): Promise<void> {
   const dir = taskDir(state, ts.id);
   const branch = taskBranch(state, ts.id);
   for (let i = 0; i < 2; i++) {
@@ -410,7 +410,7 @@ async function merge(ctx: Ctx, state: RunState, ts: TaskState): Promise<boolean>
   return true;
 }
 
-async function mergeOrFail(ctx: Ctx, state: RunState, ts: TaskState): Promise<boolean> {
+export async function mergeOrFail(ctx: Ctx, state: RunState, ts: TaskState): Promise<boolean> {
   if (await merge(ctx, state, ts)) return true;
   ts.status = 'failed';
   ts.error = 'could not be merged into the integration branch (conflict)';
