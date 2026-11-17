@@ -19,6 +19,7 @@ export function parsePlan(text: string): Plan {
       covers: Array.isArray(t.covers) ? t.covers.map(String) : [],
       needs: Array.isArray(t.needs) ? t.needs.map(String) : [],
       ...(typeof t.model === 'string' && t.model.trim() ? { model: t.model.trim() } : {}),
+      ...(typeof t.repo === 'string' && t.repo.trim() ? { repo: t.repo.trim() } : {}),
     };
   });
   return { contractHash: String(raw.contract_hash ?? ''), tasks };
@@ -30,6 +31,7 @@ export function serializePlan(p: Plan): string {
     tasks: p.tasks.map((t) => ({
       id: t.id,
       title: t.title,
+      ...(t.repo ? { repo: t.repo } : {}),
       covers: t.covers,
       needs: t.needs,
       ...(t.model ? { model: t.model } : {}),
@@ -42,7 +44,7 @@ export function serializePlan(p: Plan): string {
  * The plan must match the contract in both directions:
  * every criterion has a task responsible for it, and every task exists because of a criterion.
  */
-export function planProblems(plan: Plan, contract: Contract, contractHash: string): string[] {
+export function planProblems(plan: Plan, contract: Contract, contractHash: string, repos: string[] = []): string[] {
   const problems: string[] = [];
   if (plan.tasks.length === 0) return ['the plan has no tasks'];
   if (plan.contractHash !== contractHash) {
@@ -56,6 +58,10 @@ export function planProblems(plan: Plan, contract: Contract, contractHash: strin
     ids.add(t.id);
     if (!t.title) problems.push(`${t.id}: title is missing`);
     if (!t.brief) problems.push(`${t.id}: brief is missing`);
+    // In a workspace a task changes exactly one repository, so its work can be built and merged on its own.
+    if (repos.length && !repos.includes(t.repo ?? '')) {
+      problems.push(`${t.id}: ${t.repo ? `repo "${t.repo}" is not in this workspace` : 'repo is missing'} (one of: ${repos.join(', ')})`);
+    }
   }
 
   const criteria = new Set(contract.criteria.map((c) => c.id));
@@ -85,8 +91,8 @@ export function planProblems(plan: Plan, contract: Contract, contractHash: strin
   return problems;
 }
 
-export function validatePlan(plan: Plan, contract: Contract, contractHash: string): void {
-  const problems = planProblems(plan, contract, contractHash);
+export function validatePlan(plan: Plan, contract: Contract, contractHash: string, repos: string[] = []): void {
+  const problems = planProblems(plan, contract, contractHash, repos);
   if (problems.length) throw new ValidationError('plan', problems);
 }
 
@@ -128,7 +134,7 @@ export function renderPlan(plan: Plan): string {
     lines.push(`Wave ${i + 1}${wave.length > 1 ? ` (${wave.length} in parallel)` : ''}`);
     for (const t of wave) {
       const needs = t.needs.length ? `  after ${t.needs.join(', ')}` : '';
-      lines.push(`  ${t.id}  ${t.title}  → ${t.covers.join(', ') || 'enabling'}${needs}`);
+      lines.push(`  ${t.id}  ${t.repo ? `[${t.repo}] ` : ''}${t.title}  → ${t.covers.join(', ') || 'enabling'}${needs}`);
     }
   });
   return lines.join('\n');

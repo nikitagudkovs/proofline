@@ -91,8 +91,14 @@ export function hashContract(c: Contract): string {
 }
 
 /** Things a human should look at before approving. They do not block. */
-export function lintContract(c: Contract): string[] {
+export function lintContract(c: Contract, repos: string[] = []): string[] {
   const warnings: string[] = [];
+  // In a workspace, commands start in the folder that holds the repositories, not inside one.
+  for (const k of c.criteria) {
+    if (repos.length && k.proof.type === 'command' && !repos.some((r) => (k.proof as { run: string }).run.includes(r))) {
+      warnings.push(`${k.id}'s command names no repository folder. It runs from the workspace folder, so it should start with "cd ${repos[0]} && ...".`);
+    }
+  }
   const reviews = c.criteria.filter((k) => k.proof.type === 'review').length;
   if (reviews > c.criteria.length / 2) {
     warnings.push(

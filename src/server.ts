@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
 import { draftContract, draftPlan } from './authoring.js';
-import { configPath, loadConfig, type Config } from './config.js';
+import { configPath, loadConfig, repoList, type Config } from './config.js';
 import {
   DIR,
   approvalPath,
@@ -25,7 +25,7 @@ import { writeReport } from './report.js';
 import { cleanRun, createRun, excludeRunsDir, executeRun, makeCtx, withSessions, type Ctx } from './runner.js';
 import { listSessions, readSession, type SessionListener } from './sessions.js';
 import { shipRun } from './ship.js';
-import { AUTHORING, listRuns, loadState, runDir, saveState, sessionsDir, stateListeners } from './state.js';
+import { AUTHORING, listRuns, loadState, repoRuns, runDir, saveState, sessionsDir, stateListeners } from './state.js';
 import type { Contract, Plan, RunState, Task } from './types.js';
 import { ValidationError, gitTry, isAbort } from './util.js';
 import { verifyRun } from './verify.js';
@@ -82,7 +82,21 @@ export function readLog(root: string, runId: string): LogLine[] {
     .map((l) => JSON.parse(l) as LogLine);
 }
 
+/** Add a line to a run's activity log, which the control room shows. */
+export function appendLog(root: string, runId: string, msg: string): LogLine {
+  const line: LogLine = { t: new Date().toISOString(), msg };
+  mkdirSync(runDir(root, runId), { recursive: true });
+  appendFileSync(logFile(root, runId), `${JSON.stringify(line)}\n`);
+  return line;
+}
+
 /** What the UI shows for the contract: the parsed file, or why it does not parse. */
+/** Folder names of the workspace's repositories; empty when this folder is the one repository. */
+const repoNamesOf = (root: string) =>
+  repoList(root, loadConfig(root))
+    .map((r) => r.name)
+    .filter(Boolean);
+
 function contractView(root: string) {
   if (!existsSync(contractPath(root))) return { exists: false, approved: false, warnings: [] as string[] };
   try {
@@ -94,7 +108,7 @@ function contractView(root: string) {
     } catch {
       // not approved
     }
-    return { exists: true, contract, hash, approved: approvedHash === hash, warnings: lintContract(contract) };
+    return { exists: true, contract, hash, approved: approvedHash === hash, warnings: lintContract(contract, repoNamesOf(root)) };
   } catch (e) {
     const problems = e instanceof ValidationError ? e.problems : [(e as Error).message];
     return { exists: true, approved: false, warnings: [] as string[], problems };
@@ -104,7 +118,7 @@ function contractView(root: string) {
 function planView(root: string, contract?: Contract, hash?: string) {
   if (!existsSync(planPath(root))) return { exists: false, problems: [] as string[], waves: [] as string[][] };
   const plan = loadPlan(root);
-  const problems = contract && hash ? planProblems(plan, contract, hash) : ['there is no valid contract to check the plan against'];
+  const problems = contract && hash ? planProblems(plan, contract, hash, repoNamesOf(root)) : ['there is no valid contract to check the plan against'];
   let order: string[][] = [];
   try {
     order = waves(plan).map((w) => w.map((t) => t.id));
@@ -126,6 +140,7 @@ function runSummary(root: string, id: string) {
     proven: last?.results.filter((r) => r.verdict === 'pass').length ?? 0,
     total: last?.results.length ?? 0,
     prUrl: s.prUrl,
+    prUrls: repoRuns(s).flatMap((r) => (r.prUrl ? [{ repo: r.name, url: r.prUrl }] : [])),
   };
 }
 
@@ -141,8 +156,9 @@ export async function startServer(root: string, opts: ServerOptions) {
   let lastError = '';
   let accounts: Check[] = [];
   const refreshAccounts = async () => (accounts = await doctor(root, loadConfig(root)));
+  const engineFor = (cfg: Config) => (opts.engine ? opts.engine(cfg) : new ClaudeCodeEngine(cfg));
   void refreshAccounts();
-  await excludeRunsDir(root);
+  await excludeRunsDir(root, repoNamesOf(root).length > 0);
 
   const broadcast = (type: string, data: unknown) => {
     const frame = `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -153,12 +169,7 @@ export async function startServer(root: string, opts: ServerOptions) {
   };
   stateListeners.add(onState);
 
-  const logger = (runId: string) => (msg: string) => {
-    const line: LogLine = { t: new Date().toISOString(), msg };
-    mkdirSync(runDir(root, runId), { recursive: true });
-    appendFileSync(logFile(root, runId), `${JSON.stringify(line)}\n`);
-    broadcast('log', { runId, line });
-  };
+  const logger = (runId: string) => (msg: string) => broadcast('log', { runId, line: appendLog(root, runId, msg) });
   const sessionListener =
     (runId: string): SessionListener =>
     (meta, event) =>
@@ -169,8 +180,7 @@ export async function startServer(root: string, opts: ServerOptions) {
     if (job) throw new HttpError(409, `A ${job.kind} job is already running. Stop it or wait for it to finish.`);
     const cfg = loadConfig(root);
     const abort = new AbortController();
-    const engine = opts.engine ? opts.engine(cfg) : new ClaudeCodeEngine(cfg);
-    const base: Ctx = { ...makeCtx(root, cfg, engine, logger(runId)), signal: abort.signal };
+    const base: Ctx = { ...makeCtx(root, cfg, engineFor(cfg), logger(runId)), signal: abort.signal };
     const ctx = withSessions(base, runId, sessionListener(runId));
     job = { kind, runId, startedAt: new Date().toISOString(), abort };
     lastError = '';
@@ -190,7 +200,7 @@ export async function startServer(root: string, opts: ServerOptions) {
   const overview = () => {
     const c = contractView(root);
     return {
-      repo: { name: path.basename(root), root },
+      repo: { name: path.basename(root), root, repos: repoNamesOf(root) },
       job: job ? { kind: job.kind, runId: job.runId, startedAt: job.startedAt } : null,
       lastError,
       config: loadConfig(root),
@@ -224,8 +234,14 @@ export async function startServer(root: string, opts: ServerOptions) {
       const task = loadState(root, runId).tasks[session.meta.label];
       // Only the session that produced the task's commits has changes to show.
       if (task?.commits.length && task.attempts === session.meta.attempt) {
-        const r = await gitTry(root, 'show', '--stat', '--format=%h %s', ...task.commits);
-        changes = r.code === 0 ? r.stdout.trim() : '';
+        const parts: string[] = [];
+        for (const repo of repoList(root, loadConfig(root))) {
+          const commits = repo.name ? (task.byRepo?.[repo.name] ?? []) : task.commits;
+          if (commits.length === 0) continue;
+          const r = await gitTry(repo.root, 'show', '--stat', '--format=%h %s', ...commits);
+          if (r.code === 0) parts.push(`${repo.name ? `${repo.name}/\n` : ''}${r.stdout.trim()}`);
+        }
+        changes = parts.join('\n\n');
       }
     }
     return { ...session, changes };
@@ -284,6 +300,7 @@ export async function startServer(root: string, opts: ServerOptions) {
           covers: (t.covers ?? []).map(String),
           needs: (t.needs ?? []).map(String),
           ...(t.model ? { model: String(t.model) } : {}),
+          ...(t.repo ? { repo: String(t.repo) } : {}),
         }));
         // An unfinished plan may be saved; the run itself refuses a plan with problems.
         savePlan(root, { contractHash: hashContract(contract), tasks } satisfies Plan);
@@ -313,6 +330,14 @@ export async function startServer(root: string, opts: ServerOptions) {
           if (body[key] !== undefined) raw[key] = body[key];
         }
         if (body.models) raw.models = { ...raw.models, ...body.models };
+        // The list of repositories is edited in the file; only each one's setup command is set from here.
+        if (body.repoSetup && Array.isArray(raw.repos)) {
+          raw.repos = raw.repos.map((r: any) => {
+            const repo = typeof r === 'string' ? { path: r } : r;
+            const name = String(repo.path ?? '').replace(/^\.\//, '').replace(/\/+$/, '');
+            return name in body.repoSetup ? { ...repo, setup: String(body.repoSetup[name]) } : r;
+          });
+        }
         mkdirSync(path.join(root, DIR), { recursive: true });
         writeFileSync(file, YAML.stringify(raw));
         void refreshAccounts();
@@ -328,7 +353,7 @@ export async function startServer(root: string, opts: ServerOptions) {
         const cfg = loadConfig(root);
         const state: RunState = body.resume
           ? loadState(root, String(body.resume))
-          : await createRun(makeCtx(root, cfg, opts.engine ? opts.engine(cfg) : new ClaudeCodeEngine(cfg)));
+          : await createRun(makeCtx(root, cfg, engineFor(cfg)));
         start('run', state.id, async (ctx) => {
           ctx.log(body.resume ? `resuming run ${state.id}` : `run ${state.id} started on branch ${state.branch}`);
           await executeRun(ctx, state);
@@ -360,8 +385,8 @@ export async function startServer(root: string, opts: ServerOptions) {
       (m, body) => {
         const state = loadState(root, m[1]);
         start('ship', state.id, async (ctx) => {
-          const url = await shipRun(ctx, state, !!body.draft);
-          ctx.log(`pull request opened: ${url}`);
+          const urls = await shipRun(ctx, state, !!body.draft);
+          for (const url of urls.split('\n')) ctx.log(`pull request opened: ${url}`);
         });
         return { id: state.id };
       },
@@ -371,7 +396,8 @@ export async function startServer(root: string, opts: ServerOptions) {
       /^\/api\/runs\/([\w-]+)\/clean$/,
       async (m) => {
         if (job?.runId === m[1]) throw new HttpError(409, 'This run is still working. Stop it first.');
-        await cleanRun(root, loadState(root, m[1]));
+        const cfg = loadConfig(root);
+        await cleanRun(makeCtx(root, cfg, engineFor(cfg)), loadState(root, m[1]));
         return { ok: true };
       },
     ],

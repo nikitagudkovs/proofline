@@ -1,13 +1,18 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { DIR } from './contract.js';
-import type { RunState } from './types.js';
+import type { RepoRun, RunState } from './types.js';
 
 export const runsDir = (root: string) => path.join(root, DIR, 'runs');
 export const runDir = (root: string, id: string) => path.join(runsDir(root), id);
 export const sessionsDir = (root: string, id: string) => path.join(runDir(root, id), 'sessions');
 /** Planner sessions happen before a run exists; they are kept here. */
 export const AUTHORING = '_authoring';
+
+/** Where each repository of a run started. A single-repository run has one entry, with an empty name. */
+export function repoRuns(state: RunState): RepoRun[] {
+  return state.repos ?? [{ name: '', baseBranch: state.baseBranch, baseSha: state.baseSha, prUrl: state.prUrl }];
+}
 
 /** Called after every saved change; the UI server uses it to push updates to the browser. */
 export const stateListeners = new Set<(root: string, state: RunState) => void>();

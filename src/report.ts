@@ -1,8 +1,9 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { runDir } from './state.js';
+import { repoRuns, runDir } from './state.js';
 import type { Contract, Criterion, Plan, ProofResult, RunState, TaskState } from './types.js';
 import { fmtDuration } from './util.js';
+import { shortHead } from './verify.js';
 
 interface Row {
   criterion: Criterion;
@@ -52,6 +53,15 @@ function before(state: RunState, c: Criterion): string {
   return v === 'fail' ? 'failed, as expected' : v === 'pass' ? 'already passed (guard)' : 'not run';
 }
 
+/** Where the work sits: the branch, and what it was started from, per repository. */
+function origin(state: RunState, code: (s: string) => string): string {
+  const from = repoRuns(state).map((r) => `${r.name ? `${r.name} ` : ''}off ${code(`${r.baseBranch}@${r.baseSha.slice(0, 7)}`)}`);
+  return `branch ${code(state.branch)} ${state.repos ? `in ${from.join(', ')}` : from[0]}`;
+}
+
+const pullRequests = (state: RunState) => repoRuns(state).filter((r) => r.prUrl) as { name: string; prUrl: string }[];
+const inRepo = (t: TaskState) => (t.repo ? ` [${t.repo}]` : '');
+
 const proofLabel = (c: Criterion) => (c.proof.type === 'command' ? `command \`${c.proof.run}\`` : 'independent review');
 const mark = (r?: ProofResult) => (!r ? '➖' : r.verdict === 'pass' ? '✅' : '❌');
 const cell = (s: string) => s.replace(/\|/g, '\\|').replace(/\n/g, ' ');
@@ -59,8 +69,13 @@ const cell = (s: string) => s.replace(/\|/g, '\\|').replace(/\n/g, ' ');
 export function renderMarkdown(state: RunState, contract: Contract, plan: Plan): string {
   const out: string[] = [];
   out.push(`# Proofline report: run ${state.id}`, '');
-  out.push(`**${headline(state, contract)}** · branch \`${state.branch}\` off \`${state.baseBranch}@${state.baseSha.slice(0, 7)}\` · ${elapsed(state)}`, '');
+  out.push(`**${headline(state, contract)}** · ${origin(state, (c) => `\`${c}\``)} · ${elapsed(state)}`, '');
   out.push(`> ${contract.goal}`, '');
+  if (state.repos) {
+    out.push(`This delivery spans ${state.repos.length} repositories (${state.repos.map((r) => r.name).join(', ')}). They were verified together, each with all of its work merged.`, '');
+  }
+  for (const pr of pullRequests(state)) out.push(`- Pull request${pr.name ? ` for ${pr.name}` : ''}: ${pr.prUrl}`);
+  if (pullRequests(state).length) out.push('');
 
   out.push('## Contract → result', '');
   out.push('| | Criterion | Proof | Before the work | Built by | Commits |', '|---|---|---|---|---|---|');
@@ -88,7 +103,7 @@ export function renderMarkdown(state: RunState, contract: Contract, plan: Plan):
   for (const t of Object.values(state.tasks)) {
     const needs = planned.get(t.id)?.needs ?? [];
     out.push(
-      `| **${t.id}** ${cell(t.title)}${needs.length ? ` (after ${needs.join(', ')})` : ''} | ${t.status} | ${t.attempts} | ${t.commits.length} | ${cell(t.error ?? t.summary ?? '')} |`,
+      `| **${t.id}**${inRepo(t)} ${cell(t.title)}${needs.length ? ` (after ${needs.join(', ')})` : ''} | ${t.status} | ${t.attempts} | ${t.commits.length} | ${cell(t.error ?? t.summary ?? '')} |`,
     );
   }
 
@@ -102,7 +117,7 @@ export function renderMarkdown(state: RunState, contract: Contract, plan: Plan):
     for (const round of state.rounds) {
       const failed = round.results.filter((r) => r.verdict === 'fail').map((r) => r.criterion);
       out.push(
-        `- Round ${round.n} at \`${round.head.slice(0, 7)}\`: ${round.results.length - failed.length} of ${round.results.length} proven${failed.length ? `, sent back: ${failed.join(', ')}` : ''}`,
+        `- Round ${round.n} at \`${shortHead(round.head)}\`: ${round.results.length - failed.length} of ${round.results.length} proven${failed.length ? `, sent back: ${failed.join(', ')}` : ''}`,
       );
     }
   }
@@ -144,7 +159,7 @@ export function renderHtml(state: RunState, contract: Contract, plan: Plan): str
   const tasks = Object.values(state.tasks)
     .map((t) => {
       const needs = planned.get(t.id)?.needs ?? [];
-      return `<tr><td><span class="tag">${t.id}</span> ${esc(t.title)}${needs.length ? ` <span class="muted">after ${needs.join(', ')}</span>` : ''}</td><td>${t.status}</td><td>${t.attempts}</td><td>${t.commits.length}</td><td>${esc(t.error ?? t.summary ?? '')}</td></tr>`;
+      return `<tr><td><span class="tag">${t.id}</span>${t.repo ? ` <span class="muted">${esc(t.repo)}</span>` : ''} ${esc(t.title)}${needs.length ? ` <span class="muted">after ${needs.join(', ')}</span>` : ''}</td><td>${t.status}</td><td>${t.attempts}</td><td>${t.commits.length}</td><td>${esc(t.error ?? t.summary ?? '')}</td></tr>`;
     })
     .join('\n');
 
@@ -214,6 +229,7 @@ export function renderHtml(state: RunState, contract: Contract, plan: Plan): str
   .pill.pass { color:var(--pass); background:var(--pass-bg); }
   .pill.fail { color:var(--fail); background:var(--fail-bg); }
   .pill.none { color:var(--none); background:var(--none-bg); }
+  a { color:inherit; }
   .tag { display:inline-block; padding:1px 7px; border:1px solid var(--line); border-radius:6px; font-size:12px; font-weight:600; }
   ul { margin:0; padding:0 0 0 2px; list-style:none; } li { margin:6px 0; }
   .caught li { border:1px solid var(--line); border-radius:10px; background:var(--card); padding:12px 14px; }
@@ -226,7 +242,13 @@ export function renderHtml(state: RunState, contract: Contract, plan: Plan): str
   <h1>Proofline report</h1>
   <p class="headline">${esc(headline(state, contract))}</p>
   <p class="goal">${esc(contract.goal)}</p>
-  <p class="meta">run ${esc(state.id)} · branch <code>${esc(state.branch)}</code> off <code>${esc(state.baseBranch)}@${state.baseSha.slice(0, 7)}</code> · ${elapsed(state)}${rounds ? ` · ${rounds}` : ''}</p>
+  <p class="meta">run ${esc(state.id)} · ${origin(state, (c) => `<code>${esc(c)}</code>`)} · ${elapsed(state)}${rounds ? ` · ${rounds}` : ''}</p>${
+    pullRequests(state).length
+      ? `\n  <p class="meta">${pullRequests(state)
+          .map((pr) => `<a href="${esc(pr.prUrl)}">Pull request${pr.name ? ` for ${esc(pr.name)}` : ''}</a>`)
+          .join(' · ')}</p>`
+      : ''
+  }
 
   <h2>Contract → result</h2>
   <div class="scroll"><table class="matrix">

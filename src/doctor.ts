@@ -1,4 +1,4 @@
-import type { Config } from './config.js';
+import { repoList, type Config } from './config.js';
 import { agentEnv } from './engine.js';
 import { exec, gitTry } from './util.js';
 
@@ -22,21 +22,35 @@ async function tryExec(cmd: string, args: string[], env?: NodeJS.ProcessEnv) {
 export async function doctor(root: string, cfg: Config): Promise<Check[]> {
   const checks: Check[] = [];
 
-  const name = (await gitTry(root, 'config', 'user.name')).stdout.trim();
-  const email = (await gitTry(root, 'config', 'user.email')).stdout.trim();
-  checks.push({
-    ok: !!name && !!email,
-    label: 'git author',
-    detail: name && email ? `commits are written as ${name}` : 'set git user.name and user.email, or agents cannot commit',
-  });
+  for (const repo of repoList(root, cfg)) {
+    const of = repo.name ? ` (${repo.name})` : '';
+    const branch = (await gitTry(repo.root, 'rev-parse', '--abbrev-ref', 'HEAD')).stdout.trim();
+    checks.push({
+      ok: !!branch && branch !== 'HEAD',
+      label: `starts from${of}`,
+      detail: !branch
+        ? `${repo.root} is not a git repository`
+        : branch === 'HEAD'
+          ? 'a detached HEAD: check out a branch first'
+          : `branch ${branch}: a run builds on it, and its pull request goes into it`,
+    });
 
-  const origin = (await gitTry(root, 'remote', 'get-url', 'origin')).stdout.trim();
-  checks.push({
-    ok: !!origin,
-    shipOnly: true,
-    label: 'git remote',
-    detail: origin ? `ship pushes to ${origin}` : 'no "origin" remote: build and verify work, ship does not',
-  });
+    const name = (await gitTry(repo.root, 'config', 'user.name')).stdout.trim();
+    const email = (await gitTry(repo.root, 'config', 'user.email')).stdout.trim();
+    checks.push({
+      ok: !!name && !!email,
+      label: `git author${of}`,
+      detail: name && email ? `commits are written as ${name}` : 'set git user.name and user.email, or agents cannot commit',
+    });
+
+    const origin = (await gitTry(repo.root, 'remote', 'get-url', 'origin')).stdout.trim();
+    checks.push({
+      ok: !!origin,
+      shipOnly: true,
+      label: `git remote${of}`,
+      detail: origin ? `ship pushes to ${origin}` : 'no "origin" remote: build and verify work, ship does not',
+    });
+  }
 
   const gh = await tryExec('gh', ['api', 'user', '-q', '.login']);
   checks.push({

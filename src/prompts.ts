@@ -40,6 +40,25 @@ export const PLAN_SCHEMA = {
   required: ['tasks'],
 };
 
+/** In a workspace every task names the repository it changes. */
+export function planSchema(repos: string[] = []): object {
+  if (repos.length === 0) return PLAN_SCHEMA;
+  const item = PLAN_SCHEMA.properties.tasks.items;
+  return {
+    ...PLAN_SCHEMA,
+    properties: {
+      tasks: {
+        type: 'array',
+        items: {
+          ...item,
+          properties: { ...item.properties, repo: { type: 'string', enum: repos } },
+          required: [...item.required, 'repo'],
+        },
+      },
+    },
+  };
+}
+
 export const BUILD_SCHEMA = {
   type: 'object',
   properties: {
@@ -81,15 +100,24 @@ function criteriaBlock(criteria: Criterion[]): string {
   return criteria.map((c) => `- ${c.id}: ${c.text}\n  ${proofLine(c)}`).join('\n');
 }
 
-export function contractPrompt(goal: string): string {
+const folders = (repos: string[]) => repos.map((r) => `\`${r}/\``).join(', ');
+
+export function contractPrompt(goal: string, repos: string[] = []): string {
+  const workspace = repos.length
+    ? `
+This directory is a workspace of ${repos.length} separate git repositories that are delivered together: ${folders(repos)}. The goal may need changes in one of them or in several.
+- Every command proof runs from this workspace directory, with the repositories as folders below it. Start each command by entering the repository it tests: \`cd ${repos[0]} && ...\`.
+- When the goal changes more than one repository, add at least one "review" criterion about the seam between them: for example, that the request the frontend sends and the answer it reads match what the backend accepts and returns, field by field. It is checked after every side is delivered, with all repositories in view.
+`
+    : '';
   return `You are drafting a delivery contract for a change to the software in this directory. Other agents will build it, and an independent verifier will check the result line by line, so every line must be checkable.
 
 The requester's goal:
 """
 ${goal}
 """
-
-First inspect the repository (read-only) so the contract fits the real stack: the language, the test runner, the commands that already exist.
+${workspace}
+First inspect the ${repos.length ? 'repositories' : 'repository'} (read-only) so the contract fits the real stack: the language, the test runner, the commands that already exist.
 
 Then write the contract:
 - 3 to 12 acceptance criteria with ids C1, C2, ... in order. Each one is a single observable outcome, not an implementation step.
@@ -106,7 +134,13 @@ Then write the contract:
 Restate the goal in one or two plain sentences in "goal".`;
 }
 
-export function planPrompt(contract: Contract, problems: string[] = []): string {
+export function planPrompt(contract: Contract, problems: string[] = [], repos: string[] = []): string {
+  const workspace = repos.length
+    ? `
+- This directory is a workspace of separate git repositories: ${folders(repos)}. "repo": the one repository the task changes. A task never changes two; work that spans them is one task per repository.
+- When one side depends on the other (a screen that calls a new endpoint), the dependent task "needs" the other. It can then read the merged result of that task, and its brief should say what to look for and where.
+- Tasks in different repositories with no dependency between them run at the same time.`
+    : '';
   const retry = problems.length
     ? `\n\nYour previous plan was rejected by the validator. Fix exactly these problems:\n${problems.map((p) => `- ${p}`).join('\n')}`
     : '';
@@ -124,14 +158,29 @@ Rules:
 - "covers": the criteria the task is responsible for. Every criterion must be covered by at least one task. A task that covers nothing is allowed only when another task needs it.
 - "needs": tasks that must be merged before this one starts. Tasks with no dependency between them run at the same time on separate copies, so they must not edit the same files. If two pieces of work touch the same file, make one need the other, or make them one task.
 - The test that proves a criterion belongs to the task that covers that criterion.
-- "brief": what to build and where, plus anything the builder must know. The builder sees only its brief, the criteria it covers, and notes from the tasks it needs.${retry}`;
+- "brief": what to build and where, plus anything the builder must know. The builder sees only its brief, the criteria it covers, and notes from the tasks it needs.${workspace}${retry}`;
 }
 
-export function buildPrompt(contract: Contract, task: Task, notes: string[]): string {
+/** Where a builder can read the other repositories of the workspace, as merged so far. */
+export interface Neighbour {
+  name: string;
+  dir: string;
+}
+
+export function buildPrompt(contract: Contract, task: Task, notes: string[], neighbours: Neighbour[] = []): string {
   const mine = contract.criteria.filter((c) => task.covers.includes(c.id));
   const others = contract.criteria.filter((c) => !task.covers.includes(c.id));
+  const workspace = task.repo
+    ? `
+This delivery spans several repositories. You are in \`${task.repo}\` and change only this one. The folder above yours is laid out like the workspace, so the contract's proof commands run from there exactly as they are written: \`cd .. && <command>\`.${
+        neighbours.length
+          ? `\nThe other repositories, with everything merged so far, are there to read:\n${neighbours.map((n) => `- ${n.name}: ${n.dir}`).join('\n')}\nRead them to match the real interfaces instead of guessing. Anything you change there is thrown away; if the other side has to change, say so in "notes".`
+          : ''
+      }
+`
+    : '';
   return `You are building one task of a larger delivery. You work alone in this git worktree; other tasks are being built elsewhere and will be merged with yours.
-
+${workspace}
 Goal of the whole delivery: ${contract.goal}
 ${contract.outOfScope.length ? `Out of scope for everyone: ${contract.outOfScope.join('; ')}\n` : ''}
 Your task ${task.id}: ${task.title}
@@ -150,7 +199,13 @@ Rules:
 Finish with: "status" ("done", or "blocked" if you could not complete the task), "summary" (two or three sentences on what you built), "notes" (what a later task must know: file paths, interfaces, commands) and "concerns" (problems with the contract itself, if any).`;
 }
 
-export function fixPrompt(contract: Contract, failures: ProofResult[]): string {
+export function fixPrompt(contract: Contract, failures: ProofResult[], repos: string[] = []): string {
+  const where = repos.length
+    ? `in the repositories below this directory (${folders(repos)}, each a git worktree of its own)`
+    : 'in this git worktree';
+  const workspace = repos.length
+    ? `\n- You may change any of the repositories. When two sides disagree, fix the side that is wrong; do not patch one to fit a mistake in the other.\n- Proof commands run from this directory. Commit inside each repository you change.`
+    : '';
   const byId = new Map(contract.criteria.map((c) => [c.id, c]));
   const blocks = failures.map((f) => {
     const c = byId.get(f.criterion)!;
@@ -159,7 +214,7 @@ export function fixPrompt(contract: Contract, failures: ProofResult[]): string {
       .map((l) => `    ${l}`)
       .join('\n')}`;
   });
-  return `A delivery was built and merged in this git worktree, but independent verification found criteria that do not hold. Make them hold.
+  return `A delivery was built and merged ${where}, but independent verification found criteria that do not hold. Make them hold.
 
 Goal of the whole delivery: ${contract.goal}
 ${contract.outOfScope.length ? `Out of scope: ${contract.outOfScope.join('; ')}\n` : ''}
@@ -171,13 +226,16 @@ Rules:
 - If a proof command could not pass for any correct implementation (a wrong path, a flag that does not exist), do not add files or shims whose only purpose is to satisfy it. Report the problem in "concerns" and set "status" to "blocked"; the person who owns the contract will correct it.
 - Every criterion is verified again after your fix, so do not break the ones that pass.
 - Run the proof commands yourself before you finish.
-- Commit your work. Anything left uncommitted is committed for you.
+- Commit your work. Anything left uncommitted is committed for you.${workspace}
 
 Finish with "status" ("done" or "blocked"), "summary", "notes" and "concerns" (problems with the contract itself, if any).`;
 }
 
-export function reviewPrompt(criterion: Criterion, check: string, diffStat: string): string {
-  return `You are an independent verifier. You did not build this and you have not seen the builder's reasoning or report. Decide whether ONE acceptance criterion holds in the repository in the current directory.
+export function reviewPrompt(criterion: Criterion, check: string, diffStat: string, repos: string[] = []): string {
+  const where = repos.length
+    ? `the delivery in the current directory. It spans ${repos.length} repositories, the folders ${folders(repos)}, each with all of its work merged; when the criterion is about how they fit together, read both sides`
+    : 'the repository in the current directory';
+  return `You are an independent verifier. You did not build this and you have not seen the builder's reasoning or report. Decide whether ONE acceptance criterion holds in ${where}.
 
 Criterion ${criterion.id}: ${criterion.text}
 Question to answer: ${check}

@@ -62,7 +62,10 @@ export function RunScreen({ shell, runId }: { shell: Shell; runId?: string }) {
             <strong>{passed}</strong> of {total} proven
           </span>
           <span className="muted mono">{fmtDuration(elapsed)}</span>
-          <span className="muted mono clip">{state.branch}</span>
+          <span className="muted mono clip" title={state.repos ? state.repos.map((r) => `${r.name}: off ${r.baseBranch}`).join(', ') : `off ${state.baseBranch}`}>
+            {state.branch}
+            {state.repos ? ` in ${state.repos.map((r) => r.name).join(' + ')}` : ''}
+          </span>
         </div>
         {!readOnly && (
           <div className="row">
@@ -87,15 +90,17 @@ export function RunScreen({ shell, runId }: { shell: Shell; runId?: string }) {
               </a>
             )}
             {state.prUrl ? (
-              <a className="btn" href={state.prUrl} target="_blank" rel="noreferrer">
-                Pull request
-              </a>
+              (state.repos?.filter((r) => r.prUrl) ?? [{ name: '', prUrl: state.prUrl }]).map((r) => (
+                <a key={r.name} className="btn" href={r.prUrl} target="_blank" rel="noreferrer">
+                  Pull request{r.name ? ` · ${r.name}` : ''}
+                </a>
+              ))
             ) : (
               !shell.busy &&
               run.current &&
               state.rounds.length > 0 && (
                 <button className={`btn${state.status === 'proven' ? ' btn-primary' : ''}`} onClick={() => act(() => api.ship(state.id, state.status !== 'proven'))}>
-                  {state.status === 'proven' ? 'Open a pull request' : 'Open a draft pull request'}
+                  {state.status === 'proven' ? `Open ${state.repos ? 'the pull requests' : 'a pull request'}` : `Open ${state.repos ? 'draft pull requests' : 'a draft pull request'}`}
                 </button>
               )
             )}
@@ -111,7 +116,7 @@ export function RunScreen({ shell, runId }: { shell: Shell; runId?: string }) {
       {!run.current && <div className="notice notice-warn">The contract has changed since this run. It is shown as a record; start a new run for the new contract.</div>}
 
       <div className="split">
-        <Section title="Building blocks" aside={<span className="muted">Each task is built by its own agent, in its own copy of the repository.</span>}>
+        <Section title="Building blocks" aside={<span className="muted">Each task is built by its own agent, in its own copy of {state.repos ? 'its repository' : 'the repository'}.</span>}>
           {waves.map((wave, i) => (
             <div key={i} className="wave wave-run">
               <div className="wave-head">
@@ -139,7 +144,10 @@ export function RunScreen({ shell, runId }: { shell: Shell; runId?: string }) {
           )}
         </Section>
 
-        <Section title="Contract check" aside={<span className="muted">A line counts only when its proof passes.</span>}>
+        <Section
+          title="Contract check"
+          aside={<span className="muted">{state.repos ? 'Checked with every repository merged, side by side. A line counts only when its proof passes.' : 'A line counts only when its proof passes.'}</span>}
+        >
           <ol className="checks">
             {criteria.map((c) => (
               <Check key={c.id} criterion={c} run={run} shell={shell} />
@@ -215,6 +223,7 @@ function TaskCard({ task, needs, run, shell }: { task: TaskState; needs: string[
       </span>
       <span className="block-meta">
         <span className="chips">
+          {task.repo && <Tag>{task.repo}</Tag>}
           {task.covers.map((c) => (
             <Tag key={c} tone="accent">
               {c}

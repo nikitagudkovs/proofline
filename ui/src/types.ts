@@ -19,10 +19,12 @@ export interface RunSummary {
   proven: number;
   total: number;
   prUrl?: string;
+  prUrls?: { repo: string; url: string }[];
 }
 
 export interface Overview {
-  repo: { name: string; root: string };
+  /** `repos` lists the repositories of a workspace; it is empty when this folder is the one repository. */
+  repo: { name: string; root: string; repos?: string[] };
   job: { kind: 'contract' | 'plan' | 'run' | 'verify' | 'ship'; runId: string; startedAt: string } | null;
   lastError: string;
   config: Config;

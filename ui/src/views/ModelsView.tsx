@@ -10,12 +10,18 @@ const ROLES = [
   { id: 'verifier', title: 'Verifiers', does: 'Answer review proofs with file-and-line evidence. Read-only, independent.' },
 ] as const;
 
+const SETUP_HINT =
+  'Runs in every copy an agent or a proof works in. PROOFLINE_SOURCE is your own checkout, for what git does not track: ln -sfn "$PROOFLINE_SOURCE/node_modules" node_modules';
+
 export function ModelsView({ shell }: { shell: Shell }) {
   const { ov, act, readOnly } = shell;
   const [setup, setSetup] = useState(ov.config.setup);
   useEffect(() => setSetup(ov.config.setup), [ov.config.setup]);
-  const save = (patch: Partial<Config>) => act(() => api.saveConfig(patch));
+  const save = (patch: Partial<Config> & { repoSetup?: Record<string, string> }) => act(() => api.saveConfig(patch));
   const overrides = (ov.plan.plan?.tasks ?? []).filter((t) => t.model);
+  const repos = ov.config.repos ?? [];
+  const [repoSetup, setRepoSetup] = useState<Record<string, string>>({});
+  useEffect(() => setRepoSetup(Object.fromEntries(repos.map((r) => [r.path, r.setup]))), [JSON.stringify(repos)]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="stack">
@@ -75,19 +81,45 @@ export function ModelsView({ shell }: { shell: Shell }) {
               onChange={(e) => save({ maxFixRounds: Math.max(0, Number(e.target.value) || 0) })}
             />
           </label>
-          <label className="field field-wide" htmlFor="setup">
-            <span className="label">Command to run before the proofs (for example: npm ci)</span>
-            <input
-              id="setup"
-              className="input mono"
-              value={setup}
-              disabled={readOnly}
-              onChange={(e) => setSetup(e.target.value)}
-              onBlur={() => setup !== ov.config.setup && save({ setup })}
-            />
-          </label>
+          {repos.length === 0 && (
+            <label className="field field-wide" htmlFor="setup">
+              <span className="label">Command to prepare each copy of the repository (for example: npm ci)</span>
+              <input
+                id="setup"
+                className="input mono"
+                value={setup}
+                disabled={readOnly}
+                onChange={(e) => setSetup(e.target.value)}
+                onBlur={() => setup !== ov.config.setup && save({ setup })}
+              />
+            </label>
+          )}
         </div>
+        {repos.length === 0 && <p className="muted">{SETUP_HINT}</p>}
       </Section>
+
+      {repos.length > 0 && (
+        <Section title="Repositories in this workspace" aside={<span className="muted">One contract and one plan; a pull request per repository.</span>}>
+          <div className="settings">
+            {repos.map((r) => (
+              <label key={r.path} className="field field-wide" htmlFor={`setup-${r.path}`}>
+                <span className="label">
+                  <span className="mono">{r.path}</span>: command to prepare each copy
+                </span>
+                <input
+                  id={`setup-${r.path}`}
+                  className="input mono"
+                  value={repoSetup[r.path] ?? ''}
+                  disabled={readOnly}
+                  onChange={(e) => setRepoSetup({ ...repoSetup, [r.path]: e.target.value })}
+                  onBlur={() => (repoSetup[r.path] ?? '') !== r.setup && save({ repoSetup: { [r.path]: repoSetup[r.path] ?? '' } })}
+                />
+              </label>
+            ))}
+          </div>
+          <p className="muted">{SETUP_HINT} The list itself is in .proofline/config.yaml.</p>
+        </Section>
+      )}
 
       <Section
         title="Accounts this runs on"

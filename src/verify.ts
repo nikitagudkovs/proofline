@@ -1,9 +1,9 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { Ctx } from './runner.js';
-import { integrationDir } from './runner.js';
+import { integrationDir, integrationRepo, repoNames } from './runner.js';
 import { REVIEW_SCHEMA, reviewPrompt, type ReviewOutput } from './prompts.js';
-import { runDir, saveState } from './state.js';
+import { repoRuns, runDir, saveState } from './state.js';
 import type { Contract, Criterion, ProofResult, RunState, VerificationRound } from './types.js';
 import { AbortError, exec, git, isAbort, mapLimit, tail } from './util.js';
 
@@ -16,20 +16,19 @@ import { AbortError, exec, git, isAbort, mapLimit, tail } from './util.js';
 export async function verifyRun(ctx: Ctx, state: RunState, contract: Contract): Promise<VerificationRound> {
   const cwd = integrationDir(state);
   const n = state.rounds.length + 1;
-  const head = await git(cwd, 'rev-parse', 'HEAD');
+  const heads: string[] = [];
+  for (const repo of ctx.repos) heads.push(await git(integrationRepo(state, repo), 'rev-parse', 'HEAD'));
+  const head = state.repos ? ctx.repos.map((r, i) => `${r.name}@${heads[i].slice(0, 7)}`).join(' ') : heads[0];
   const evidenceDir = path.join(runDir(ctx.root, state.id), 'evidence', `round-${n}`);
   mkdirSync(evidenceDir, { recursive: true });
   state.status = 'verifying';
   state.progress = [];
   saveState(ctx.root, state);
-  ctx.log(`verifying ${contract.criteria.length} criteria at ${head.slice(0, 7)} (round ${n})`);
+  ctx.log(`verifying ${contract.criteria.length} criteria at ${shortHead(head)} (round ${n})`);
 
-  let setupFailure = '';
-  if (ctx.cfg.setup) {
-    const r = await runShell(ctx.cfg.setup, cwd, ctx.cfg.timeouts.commandSec);
-    writeFileSync(path.join(evidenceDir, 'setup.log'), r.output);
-    if (!r.ok) setupFailure = `setup command \`${ctx.cfg.setup}\` failed (${r.how}):\n${tail(r.output, 15)}`;
-  }
+  const setup = await setUp(ctx, state);
+  if (setup.output) writeFileSync(path.join(evidenceDir, 'setup.log'), setup.output);
+  const setupFailure = setup.failure;
 
   const results = new Map<string, ProofResult>();
   const record = (r: ProofResult) => {
@@ -64,7 +63,12 @@ export async function verifyRun(ctx: Ctx, state: RunState, contract: Contract): 
 
   const reviews = contract.criteria.filter((c) => c.proof.type === 'review');
   if (reviews.length) {
-    const diffStat = await git(cwd, 'diff', '--stat', `${state.baseSha}..HEAD`);
+    const stats: string[] = [];
+    for (const [i, repo] of ctx.repos.entries()) {
+      const stat = await git(integrationRepo(state, repo), 'diff', '--stat', `${repoRuns(state)[i].baseSha}..HEAD`);
+      if (stat) stats.push(repo.name ? `${repo.name}/\n${stat}` : stat);
+    }
+    const diffStat = stats.join('\n');
     await mapLimit(reviews, ctx.cfg.concurrency, async (c) => record(await review(ctx, state, c, cwd, diffStat)));
   }
 
@@ -88,7 +92,7 @@ export async function runBaseline(ctx: Ctx, state: RunState, contract: Contract)
   const cwd = integrationDir(state);
   const commands = contract.criteria.filter((c) => c.proof.type === 'command');
   const baseline: Record<string, 'pass' | 'fail'> = {};
-  const setupOk = !ctx.cfg.setup || (await runShell(ctx.cfg.setup, cwd, ctx.cfg.timeouts.commandSec)).ok;
+  const setupOk = !(await setUp(ctx, state)).failure;
   for (const c of commands) {
     if (c.proof.type !== 'command') continue;
     const ok = setupOk && (await runShell(c.proof.run, cwd, c.proof.timeoutSec ?? ctx.cfg.timeouts.commandSec)).ok;
@@ -111,7 +115,7 @@ async function review(ctx: Ctx, state: RunState, c: Criterion, cwd: string, diff
       role: 'verifier',
       label: c.id,
       cwd,
-      prompt: reviewPrompt(c, check, diffStat),
+      prompt: reviewPrompt(c, check, diffStat, repoNames(ctx)),
       schema: REVIEW_SCHEMA,
       write: false,
       signal: ctx.signal,
@@ -137,13 +141,37 @@ async function review(ctx: Ctx, state: RunState, c: Criterion, cwd: string, diff
   }
 }
 
-async function runShell(command: string, cwd: string, timeoutSec: number) {
+/** A full commit id is shown short; a workspace head is already one short id per repository. */
+export const shortHead = (head: string) => (/^[0-9a-f]{40}$/.test(head) ? head.slice(0, 7) : head);
+
+/**
+ * Run a setup command in one copy of a repository. PROOFLINE_SOURCE points at the person's own
+ * checkout, so the command can link or copy what git does not track (dependencies, key files).
+ */
+export function runSetup(ctx: Ctx, command: string, cwd: string, source: string) {
+  return runShell(command, cwd, ctx.cfg.timeouts.commandSec, { PROOFLINE_SOURCE: source });
+}
+
+/** Prepare the place the proofs run in: each repository's setup, then the workspace's own, if any. */
+async function setUp(ctx: Ctx, state: RunState): Promise<{ output: string; failure: string }> {
+  const steps = ctx.repos.filter((r) => r.setup).map((r) => ({ command: r.setup, cwd: integrationRepo(state, r), source: r.root }));
+  if (state.repos && ctx.cfg.setup) steps.push({ command: ctx.cfg.setup, cwd: integrationDir(state), source: ctx.root });
+  let output = '';
+  for (const step of steps) {
+    const r = await runSetup(ctx, step.command, step.cwd, step.source);
+    output += `$ ${step.command}\n${r.output}\n[${r.how}]\n`;
+    if (!r.ok) return { output, failure: `setup command \`${step.command}\` failed (${r.how}):\n${tail(r.output, 15)}` };
+  }
+  return { output, failure: '' };
+}
+
+async function runShell(command: string, cwd: string, timeoutSec: number, env: Record<string, string> = {}) {
   const started = Date.now();
   const r = await exec(command, [], {
     cwd,
     shell: true,
     timeoutMs: timeoutSec * 1000,
-    env: { ...process.env, CI: '1' },
+    env: { ...process.env, CI: '1', ...env },
   });
   const ms = Date.now() - started;
   const how = r.timedOut ? `timed out after ${timeoutSec}s` : `exit ${r.code} in ${(ms / 1000).toFixed(1)}s`;

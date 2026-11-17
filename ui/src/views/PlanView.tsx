@@ -25,6 +25,7 @@ export function PlanView({ shell }: { shell: Shell }) {
   const { ov, act, readOnly } = shell;
   const saved = ov.plan.plan?.tasks;
   const criteria = ov.contract.contract?.criteria ?? [];
+  const repos = ov.repo.repos ?? [];
   const [tasks, setTasks] = useState<Task[]>(saved ?? []);
   const [dirty, setDirty] = useState(false);
   const [openTask, setOpenTask] = useState<string>();
@@ -39,7 +40,7 @@ export function PlanView({ shell }: { shell: Shell }) {
   };
   const addTask = () => {
     const n = Math.max(0, ...tasks.map((t) => Number(t.id.slice(1)) || 0)) + 1;
-    setTasks([...tasks, { id: `T${n}`, title: '', brief: '', covers: [], needs: [] }]);
+    setTasks([...tasks, { id: `T${n}`, title: '', brief: '', covers: [], needs: [], ...(repos.length ? { repo: repos[0] } : {}) }]);
     setOpenTask(`T${n}`);
     setDirty(true);
   };
@@ -82,7 +83,7 @@ export function PlanView({ shell }: { shell: Shell }) {
       </Section>
 
       <Section
-        title="Building blocks"
+        title={repos.length ? `Building blocks across ${repos.join(' and ')}` : 'Building blocks'}
         aside={
           !readOnly && (
             <>
@@ -150,10 +151,26 @@ export function PlanView({ shell }: { shell: Shell }) {
                     </header>
                     <div className="block-meta">
                       <span className="chips">
+                        {t.repo && <Tag>{t.repo}</Tag>}
                         {t.covers.length ? t.covers.map((c) => <Tag key={c} tone="accent">{c}</Tag>) : <span className="muted">prepares for others</span>}
                       </span>
                       {t.needs.length > 0 && <span className="muted">after {t.needs.join(', ')}</span>}
                     </div>
+                    {repos.length > 0 && (
+                      <div className="block-model">
+                        <label className="label" htmlFor={`repo-${t.id}`}>
+                          Repository
+                        </label>
+                        <select id={`repo-${t.id}`} className="select" value={t.repo ?? ''} disabled={readOnly} onChange={(e) => edit(t.id, { repo: e.target.value || undefined })}>
+                          {!repos.includes(t.repo ?? '') && <option value={t.repo ?? ''}>{t.repo ? `${t.repo} (not in this workspace)` : 'Choose one'}</option>}
+                          {repos.map((r) => (
+                            <option key={r} value={r}>
+                              {r}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                     <div className="block-model">
                       <label className="label" htmlFor={`model-${t.id}`}>
                         Model

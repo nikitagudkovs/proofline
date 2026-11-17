@@ -2,8 +2,8 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { DIR, loadApprovedContract, parseContract, saveContract, serializeContract } from './contract.js';
 import { planProblems, savePlan } from './plan.js';
-import { CONTRACT_SCHEMA, PLAN_SCHEMA, contractPrompt, planPrompt } from './prompts.js';
-import type { Ctx } from './runner.js';
+import { CONTRACT_SCHEMA, contractPrompt, planPrompt, planSchema } from './prompts.js';
+import { repoNames, type Ctx } from './runner.js';
 import type { AgentResult } from './engine.js';
 import type { Contract, Plan, Task, Usage } from './types.js';
 import { ValidationError } from './util.js';
@@ -41,7 +41,7 @@ export async function draftContract(ctx: Ctx, goal: string): Promise<Contract> {
     role: 'planner',
     label: 'contract',
     cwd: ctx.root,
-    prompt: contractPrompt(goal),
+    prompt: contractPrompt(goal, repoNames(ctx)),
     schema: CONTRACT_SCHEMA,
     write: false,
     signal: ctx.signal,
@@ -66,14 +66,15 @@ export async function draftContract(ctx: Ctx, goal: string): Promise<Contract> {
 /** Break the approved contract into tasks. The validator, not the planner, decides whether the plan is acceptable. */
 export async function draftPlan(ctx: Ctx): Promise<Plan> {
   const { contract, hash } = loadApprovedContract(ctx.root);
+  const repos = repoNames(ctx);
   let problems: string[] = [];
   for (let attempt = 0; attempt < 2; attempt++) {
     const res = await ctx.engine.run<{ tasks: Task[] }>({
       role: 'planner',
       label: 'plan',
       cwd: ctx.root,
-      prompt: planPrompt(contract, problems),
-      schema: PLAN_SCHEMA,
+      prompt: planPrompt(contract, problems, repos),
+      schema: planSchema(repos),
       write: false,
       signal: ctx.signal,
     });
@@ -87,9 +88,10 @@ export async function draftPlan(ctx: Ctx): Promise<Plan> {
         brief: String(t.brief).trim(),
         covers: t.covers ?? [],
         needs: t.needs ?? [],
+        ...(repos.length && t.repo ? { repo: String(t.repo).trim() } : {}),
       })),
     };
-    problems = planProblems(plan, contract, hash);
+    problems = planProblems(plan, contract, hash, repos);
     if (problems.length === 0) {
       savePlan(ctx.root, plan);
       return plan;

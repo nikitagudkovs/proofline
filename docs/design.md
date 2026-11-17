@@ -33,7 +33,7 @@ ui/             the control room itself (React), built into dist/ui
 | Role | Can write files | Sees | Its output is |
 |---|---|---|---|
 | Planner | no | the repository, the goal | a draft, checked by a validator and (for the contract) approved by a person |
-| Builder | yes, in its own worktree | its brief, its criteria and proofs, notes from tasks it depends on | never trusted as evidence |
+| Builder | yes, in its own worktree | its brief, its criteria and proofs, notes from tasks it depends on, and in a workspace the other repositories as merged so far | never trusted as evidence |
 | Verifier | no | one criterion, the code, the list of changed files | a verdict that must cite `file:line`; no answer counts as fail |
 
 The harness itself, plain code with no model in it, is the fourth actor and the most trusted: it runs command proofs, merges branches, hashes the contract and writes the report.
@@ -73,6 +73,33 @@ A fixer that changes nothing, or reports that it is blocked, ends the loop early
 ### When the contract itself is wrong
 
 Builders cannot edit the contract, and they are told not to bend the product around a proof that could never pass (a wrong path, a flag that does not exist). They can raise a *concern*, which is recorded and shown in the report. The person who owns the contract corrects it and approves it again, which starts a new run. That is deliberate: a contract that agents can renegotiate is not a contract.
+
+## Workspaces: one delivery across several repositories
+
+A feature that needs an endpoint and the screen that calls it is one piece of work, and the interesting failures sit on the seam between the two. So a workspace run keeps one contract, one plan and one verification, and gives each repository its own branches and merges:
+
+```
+<run>/integration/api      everything merged so far, per repository; proofs and reviewers run above them
+<run>/integration/web
+<run>/reference/api        the same commits, as a separate copy that builders of other repositories read
+<run>/reference/web
+<run>/T2/web               the task's own worktree, the only place it can change
+<run>/T2/api  → reference  a link, so the task folder is laid out like the workspace
+<run>/FIX1/api, FIX1/web   a fixer gets a writable worktree of every repository
+```
+
+- **A task changes one repository.** The plan validator insists on it. That keeps a task's merge a single-repository event, which is what lets parallel tasks, conflicts and rebuilds work as they do for one repository.
+- **Order across the seam is a dependency like any other.** The frontend task `needs` the backend task, so it starts after that merge and reads the real endpoint in `reference/`.
+- **Builders never see the integration worktrees.** They can write files, and a stray edit there would change what the proofs see without ever being committed. The reference copies are reset to the integration heads before every wave, so a stray edit dies there.
+- **Verification is the only place both sides meet.** Commands run from `integration/`, reviewers read from it, and a contract drafted for a workspace is asked for at least one review of the seam itself.
+- **A fix is the one task that may cross.** A failed line does not say which side is wrong, so the fixer gets all of them writable and its commits are merged per repository.
+- **Shipping is per repository.** One pull request each, into the branch that repository was on at the start, with a comment naming the others.
+
+A single repository is the same code with one unnamed repository and no reference copies.
+
+## Setup commands and what they leave behind
+
+Agents and proofs work in fresh worktrees, which have no dependencies and no untracked key files. The `setup` command runs in every such copy with `PROOFLINE_SOURCE` pointing at the person's own checkout, so it can link or copy them. Whatever it leaves untracked is recorded and kept out of the task's commit: a linked `node_modules` slips past a `node_modules/` ignore rule, and it must not end up in a pull request.
 
 ## State and resume
 

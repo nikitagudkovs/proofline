@@ -139,7 +139,10 @@ export function App() {
             ✓
           </span>
           <span className="brand-name">proofline</span>
-          <span className="brand-repo mono">{ov.repo.name}</span>
+          <span className="brand-repo mono" title={ov.repo.repos?.length ? `A workspace of ${ov.repo.repos.join(' and ')}` : undefined}>
+            {ov.repo.name}
+            {ov.repo.repos?.length ? ` · ${ov.repo.repos.join(' + ')}` : ''}
+          </span>
         </div>
         <nav className="tabs" aria-label="Stages">
           {VIEWS.map((v, i) => (

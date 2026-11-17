@@ -26,6 +26,8 @@ export interface AgentRequest {
   write: boolean;
   /** Overrides the model configured for the role, e.g. a per-task choice. */
   model?: string;
+  /** Folders outside `cwd` the agent may also read, e.g. the other repositories of a workspace. */
+  addDirs?: string[];
   onEvent?: (event: AgentEvent) => void;
   signal?: AbortSignal;
 }
@@ -66,6 +68,7 @@ export function claudeArgs(req: AgentRequest, cfg: Config): string[] {
   ];
   const model = req.model || cfg.models[req.role];
   if (model) args.push('--model', model);
+  for (const dir of req.addDirs ?? []) args.push('--add-dir', dir);
   if (req.write) {
     args.push('--permission-mode', cfg.builder.permissionMode, '--allowedTools', cfg.builder.allowedTools.join(','));
   } else {

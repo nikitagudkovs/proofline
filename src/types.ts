@@ -27,6 +27,8 @@ export interface Task {
   needs: string[];
   /** Model for this task's builder. Empty means the builder model from the settings. */
   model?: string;
+  /** In a workspace of several repositories: the one this task changes. */
+  repo?: string;
 }
 
 export interface Plan {
@@ -44,6 +46,10 @@ export interface TaskState {
   status: TaskStatus;
   attempts: number;
   commits: string[];
+  /** In a workspace: the repository this task changes. A fix task has none, it may change any of them. */
+  repo?: string;
+  /** In a workspace: the same commits, by repository. */
+  byRepo?: Record<string, string[]>;
   /** The builder's own summary. Informational only: it never counts as proof. */
   summary?: string;
   notes?: string;
@@ -69,7 +75,7 @@ export interface ProofResult {
 
 export interface VerificationRound {
   n: number;
-  /** Commit the proofs were run against. */
+  /** Commit the proofs were run against. In a workspace: one short commit per repository. */
   head: string;
   at: string;
   results: ProofResult[];
@@ -83,6 +89,15 @@ export interface Usage {
   durationMs: number;
 }
 
+/** One repository of a workspace run: where its work started and where it went. */
+export interface RepoRun {
+  /** Folder of the repository inside the workspace. */
+  name: string;
+  baseBranch: string;
+  baseSha: string;
+  prUrl?: string;
+}
+
 export type RunStatus = 'building' | 'verifying' | 'proven' | 'unproven' | 'stopped';
 
 export interface RunState {
@@ -91,8 +106,10 @@ export interface RunState {
   contractHash: string;
   baseBranch: string;
   baseSha: string;
-  /** Integration branch that collects the merged tasks. */
+  /** Integration branch that collects the merged tasks. In a workspace, every repository gets one by this name. */
   branch: string;
+  /** Set when the run spans several repositories; baseBranch and baseSha above are then empty. */
+  repos?: RepoRun[];
   worktreeRoot: string;
   startedAt: string;
   finishedAt?: string;

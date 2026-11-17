@@ -4,16 +4,16 @@ import path from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { draftContract, draftPlan } from './authoring.js';
-import { CONFIG_TEMPLATE, configPath, loadConfig } from './config.js';
+import { CONFIG_TEMPLATE, configPath, findWorkspace, loadConfig, workspaceTemplate } from './config.js';
 import { DIR, approveContract, contractPath, lintContract, loadApprovedContract, loadContract, renderContract } from './contract.js';
 import { doctor } from './doctor.js';
 import { ClaudeCodeEngine } from './engine.js';
 import { loadPlan, planPath, renderPlan, validatePlan } from './plan.js';
 import { writeReport } from './report.js';
-import { startServer } from './server.js';
+import { appendLog, startServer } from './server.js';
 import { shipRun } from './ship.js';
-import { cleanRun, createRun, excludeRunsDir, executeRun, makeCtx, withSessions, type Ctx } from './runner.js';
-import { AUTHORING, latestRun, listRuns, loadState, runDir, saveState } from './state.js';
+import { cleanRun, createRun, excludeRunsDir, executeRun, makeCtx, repoNames, withSessions, type Ctx } from './runner.js';
+import { AUTHORING, latestRun, listRuns, loadState, repoRuns, runDir, saveState } from './state.js';
 import type { RunState } from './types.js';
 import { exec, git } from './util.js';
 import { verifyRun } from './verify.js';
@@ -24,6 +24,8 @@ const HELP = `proofline: a contract-first orchestrator for coding agents
                                 live agent sessions, models, reports
   proofline doctor              show which GitHub account and Claude login a run will use
   proofline init                add .proofline/ with default settings
+  proofline init --repos a,b    make this folder a workspace: repositories a/ and b/ are
+                                planned, built and verified as one delivery
   proofline contract "<goal>"   draft a contract: numbered criteria, each with a proof
   proofline approve             lock the contract as it stands (any later edit voids this)
   proofline plan                break the approved contract into tasks
@@ -41,6 +43,7 @@ Options
   --concurrency N   run: builders at the same time
   --yes             go: approve the drafted contract without asking
   --draft           ship: open a draft pull request, allowed even when not proven
+  --repos a,b       init: the repositories of a workspace, as folders below this one
   --port N          ui: port to listen on (default 4717)
   --no-open         ui: do not open the browser
 `;
@@ -53,6 +56,7 @@ const { values: flags, positionals } = parseArgs({
     concurrency: { type: 'string' },
     yes: { type: 'boolean', default: false },
     draft: { type: 'boolean', default: false },
+    repos: { type: 'string' },
     port: { type: 'string' },
     host: { type: 'string' },
     'no-open': { type: 'boolean', default: false },
@@ -71,13 +75,32 @@ function log(msg: string) {
   console.log(`${dim(new Date().toTimeString().slice(0, 8))} ${msg}`);
 }
 
-async function context(): Promise<Ctx> {
+/** The workspace this folder belongs to, if its settings list several repositories; otherwise the repository. */
+async function findRoot(): Promise<string> {
+  if (positionals[0] === 'init' && flags.repos) return process.cwd();
+  const workspace = findWorkspace(process.cwd());
+  if (workspace) return workspace;
   const top = await exec('git', ['rev-parse', '--show-toplevel'], {});
-  if (top.code !== 0) throw new Error('proofline works inside a git repository. Run it from one.');
-  const root = top.stdout.trim();
+  if (top.code !== 0) {
+    throw new Error('proofline works inside a git repository, or in a folder of several: proofline init --repos <folder>,<folder>');
+  }
+  return top.stdout.trim();
+}
+
+async function context(): Promise<Ctx> {
+  const root = await findRoot();
   const cfg = loadConfig(root);
   if (flags.concurrency) cfg.concurrency = Math.max(1, Number(flags.concurrency) || cfg.concurrency);
   return makeCtx(root, cfg, new ClaudeCodeEngine(cfg), log);
+}
+
+/** A run started in a terminal keeps the same records as one started in the control room, so either can show it. */
+function recorded(ctx: Ctx, runId: string): Ctx {
+  const tee = (msg: string) => {
+    ctx.log(msg);
+    appendLog(ctx.root, runId, msg);
+  };
+  return withSessions({ ...ctx, log: tee }, runId);
 }
 
 const pickRun = (root: string): RunState => (flags.run ? loadState(root, flags.run) : latestRun(root));
@@ -111,16 +134,29 @@ const commands: Record<string, (ctx: Ctx) => Promise<number>> = {
     const checks = await doctor(ctx.root, ctx.cfg);
     for (const c of checks) {
       const sign = c.ok ? green('✓') : c.shipOnly ? paint(33, '!') : red('✗');
-      console.log(`${sign} ${c.label.padEnd(15)} ${c.detail}`);
+      console.log(`${sign} ${c.label.padEnd(checks.reduce((n, x) => Math.max(n, x.label.length), 0))}  ${c.detail}`);
     }
     return checks.every((c) => c.ok || c.shipOnly) ? 0 : 1;
   },
 
   async init(ctx) {
+    const repos = (flags.repos ?? '').split(',').map((r) => r.trim().replace(/\/+$/, '')).filter(Boolean);
+    for (const repo of repos) {
+      if (!existsSync(path.join(ctx.root, repo, '.git'))) throw new Error(`${repo} is not a git repository inside this folder.`);
+    }
     mkdirSync(path.join(ctx.root, DIR), { recursive: true });
-    if (!existsSync(configPath(ctx.root))) writeFileSync(configPath(ctx.root), CONFIG_TEMPLATE);
-    await excludeRunsDir(ctx.root);
-    console.log(`Ready. Settings are in ${DIR}/config.yaml.\nNext: proofline contract "<what you want built>"`);
+    if (!existsSync(configPath(ctx.root))) {
+      writeFileSync(configPath(ctx.root), repos.length ? workspaceTemplate(repos) : CONFIG_TEMPLATE);
+    } else if (repos.length && repoNames(ctx).join() !== repos.join()) {
+      throw new Error(`${DIR}/config.yaml already exists. Add the repositories there:\n\nrepos:\n${repos.map((r) => `  - path: ${r}`).join('\n')}`);
+    }
+    await excludeRunsDir(ctx.root, repos.length > 0 || repoNames(ctx).length > 0);
+    console.log(
+      repos.length
+        ? `Ready. This folder is a workspace of ${repos.join(' and ')}: one contract, one plan, a pull request per repository.`
+        : 'Ready.',
+    );
+    console.log(`Settings are in ${DIR}/config.yaml.\nNext: proofline ui, or proofline contract "<what you want built>"`);
     return 0;
   },
 
@@ -130,7 +166,7 @@ const commands: Record<string, (ctx: Ctx) => Promise<number>> = {
     log('drafting the contract (the planner reads the repository first)');
     const contract = await draftContract(withSessions(ctx, AUTHORING), goal);
     console.log(`\n${renderContract(contract)}\n`);
-    for (const w of lintContract(contract)) console.log(`${paint(33, 'note')} ${w}`);
+    for (const w of lintContract(contract, repoNames(ctx))) console.log(`${paint(33, 'note')} ${w}`);
     console.log(`Saved to ${path.relative(process.cwd(), contractPath(ctx.root))}. Edit it until it says what you mean, then: proofline approve`);
     return 0;
   },
@@ -138,7 +174,7 @@ const commands: Record<string, (ctx: Ctx) => Promise<number>> = {
   async approve(ctx) {
     const contract = loadContract(ctx.root);
     console.log(`${renderContract(contract)}\n`);
-    for (const w of lintContract(contract)) console.log(`${paint(33, 'note')} ${w}`);
+    for (const w of lintContract(contract, repoNames(ctx))) console.log(`${paint(33, 'note')} ${w}`);
     const hash = approveContract(ctx.root);
     console.log(`Approved (${hash}). Editing the contract voids this approval.\nNext: proofline plan`);
     return 0;
@@ -158,12 +194,14 @@ const commands: Record<string, (ctx: Ctx) => Promise<number>> = {
       state = pickRun(ctx.root);
       log(`resuming run ${state.id}`);
     } else {
-      const dirty = await git(ctx.root, 'status', '--porcelain', '--untracked-files=no');
-      if (dirty) log('note: uncommitted changes in your checkout are not part of the run; it starts from the last commit');
+      for (const repo of ctx.repos) {
+        const dirty = await git(repo.root, 'status', '--porcelain', '--untracked-files=no');
+        if (dirty) log(`note: uncommitted changes in ${repo.name || 'your checkout'} are not part of the run; it starts from the last commit`);
+      }
       state = await createRun(ctx);
       log(`run ${state.id} started on branch ${state.branch}`);
     }
-    return finish(ctx, await executeRun(withSessions(ctx, state.id), state));
+    return finish(ctx, await executeRun(recorded(ctx, state.id), state));
   },
 
   async verify(ctx) {
@@ -171,7 +209,8 @@ const commands: Record<string, (ctx: Ctx) => Promise<number>> = {
     const { contract, hash } = loadApprovedContract(ctx.root);
     if (hash !== state.contractHash) throw new Error('The contract changed since this run. Start a new run.');
     const plan = loadPlan(ctx.root);
-    const round = await verifyRun(withSessions(ctx, state.id), state, contract);
+    validatePlan(plan, contract, hash, repoNames(ctx));
+    const round = await verifyRun(recorded(ctx, state.id), state, contract);
     state.status = round.results.every((r) => r.verdict === 'pass') ? 'proven' : 'unproven';
     saveState(ctx.root, state);
     writeReport(ctx.root, state, contract, plan);
@@ -187,14 +226,14 @@ const commands: Record<string, (ctx: Ctx) => Promise<number>> = {
       }
       for (const id of ids) {
         const s = loadState(ctx.root, id);
-        console.log(`${id}  ${s.status.padEnd(9)}  ${s.branch}${s.prUrl ? `  ${s.prUrl}` : ''}`);
+        console.log(`${id}  ${s.status.padEnd(9)}  ${s.branch}${repoRuns(s).map((r) => (r.prUrl ? `  ${r.prUrl}` : '')).join('')}`);
       }
       console.log('');
     }
     const state = pickRun(ctx.root);
     console.log(bold(`Run ${state.id}: ${state.status}`));
     for (const t of Object.values(state.tasks)) {
-      console.log(`  ${t.id.padEnd(5)} ${t.status.padEnd(9)} ${t.title}${t.error ? dim(`  (${t.error})`) : ''}`);
+      console.log(`  ${t.id.padEnd(5)} ${t.status.padEnd(9)} ${t.repo ? `[${t.repo}] ` : ''}${t.title}${t.error ? dim(`  (${t.error})`) : ''}`);
     }
     const last = state.rounds[state.rounds.length - 1];
     for (const r of last?.results ?? []) {
@@ -237,7 +276,7 @@ const commands: Record<string, (ctx: Ctx) => Promise<number>> = {
 
   async clean(ctx) {
     const state = pickRun(ctx.root);
-    await cleanRun(ctx.root, state);
+    await cleanRun(ctx, state);
     console.log(`Removed the worktrees of run ${state.id}. Branch ${state.branch} and the report are kept.`);
     return 0;
   },
@@ -248,7 +287,7 @@ const commands: Record<string, (ctx: Ctx) => Promise<number>> = {
     log('drafting the contract');
     const contract = await draftContract(withSessions(ctx, AUTHORING), goal);
     console.log(`\n${renderContract(contract)}\n`);
-    for (const w of lintContract(contract)) console.log(`${paint(33, 'note')} ${w}`);
+    for (const w of lintContract(contract, repoNames(ctx))) console.log(`${paint(33, 'note')} ${w}`);
     if (!flags.yes) {
       if (!process.stdin.isTTY) throw new Error('The contract needs an approval. Review it and run "proofline approve", or pass --yes.');
       const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -262,11 +301,11 @@ const commands: Record<string, (ctx: Ctx) => Promise<number>> = {
     const hash = approveContract(ctx.root);
     log(`contract approved (${hash}); planning`);
     const plan = await draftPlan(withSessions(ctx, AUTHORING));
-    validatePlan(plan, contract, hash);
+    validatePlan(plan, contract, hash, repoNames(ctx));
     console.log(`\n${renderPlan(plan)}\n`);
     const state = await createRun(ctx);
     log(`run ${state.id} started on branch ${state.branch}`);
-    return finish(ctx, await executeRun(withSessions(ctx, state.id), state));
+    return finish(ctx, await executeRun(recorded(ctx, state.id), state));
   },
 };
 

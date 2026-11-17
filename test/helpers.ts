@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { DEFAULTS, type Config } from '../src/config.js';
+import { DEFAULTS, loadConfig, type Config } from '../src/config.js';
 import { DIR, approveContract } from '../src/contract.js';
 import type { AgentRequest, AgentResult, Engine } from '../src/engine.js';
 import { makeCtx, type Ctx } from '../src/runner.js';
@@ -83,6 +83,36 @@ export async function fixture(contractYaml: string, planTasksYaml: string): Prom
   // Worktrees go next to the throwaway repository, also for code that reads the settings file itself.
   const cfg: Config = { ...DEFAULTS, worktreeDir: path.join(base, 'worktrees') };
   writeFileSync(path.join(root, DIR, 'config.yaml'), `worktreeDir: ${cfg.worktreeDir}\n`);
+  const logs: string[] = [];
+  return { root, cfg, logs, ctx: (engine) => makeCtx(root, cfg, engine, (m) => logs.push(m)) };
+}
+
+async function emptyRepo(root: string, branch: string): Promise<void> {
+  mkdirSync(root, { recursive: true });
+  await git(root, 'init', '-q', '-b', branch);
+  await git(root, 'config', 'user.name', 'Test');
+  await git(root, 'config', 'user.email', 'test@example.com');
+  await git(root, 'config', 'commit.gpgsign', 'false');
+  writeFileSync(path.join(root, 'README.md'), `# ${path.basename(root)}\n`);
+  await git(root, 'add', '-A');
+  await git(root, 'commit', '-q', '-m', 'initial');
+}
+
+/**
+ * A throwaway workspace: a plain folder holding two repositories, `api` (on branch develop)
+ * and `web` (on main), with one approved contract and one plan for both.
+ */
+export async function workspace(contractYaml: string, planTasksYaml: string, settings = ''): Promise<Fixture> {
+  const base = mkdtempSync(path.join(os.tmpdir(), 'proofline-test-'));
+  const root = path.join(base, 'ws');
+  await emptyRepo(path.join(root, 'api'), 'develop');
+  await emptyRepo(path.join(root, 'web'), 'main');
+  mkdirSync(path.join(root, DIR), { recursive: true });
+  writeFileSync(path.join(root, DIR, 'config.yaml'), `worktreeDir: ${path.join(base, 'worktrees')}\nrepos: [api, web]\n${settings}`);
+  writeFileSync(path.join(root, DIR, 'contract.yaml'), contractYaml);
+  const hash = approveContract(root);
+  writeFileSync(path.join(root, DIR, 'plan.yaml'), `contract_hash: ${hash}\n${planTasksYaml}`);
+  const cfg = loadConfig(root);
   const logs: string[] = [];
   return { root, cfg, logs, ctx: (engine) => makeCtx(root, cfg, engine, (m) => logs.push(m)) };
 }

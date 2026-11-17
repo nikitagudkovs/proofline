@@ -110,6 +110,7 @@ proofline doctor    # or, in the terminal: which accounts a run will use
 ```
 
 ```
+✓ starts from     branch main: a run builds on it, and its pull request goes into it
 ✓ git author      commits are written as Ada Lovelace
 ✓ git remote      ship pushes to git@github.com:ada/engine.git
 ✓ GitHub account  pull requests are opened as ada
@@ -146,7 +147,8 @@ proofline go "Let users export their invoices as CSV from the billing page"
 | Command | What it does |
 |---|---|
 | `ui` | Opens the control room in your browser |
-| `doctor` | Shows which GitHub account and Claude login a run will use |
+| `doctor` | Shows which GitHub account and Claude login a run will use, and the branch it starts from |
+| `init --repos a,b` | Makes this folder a workspace of several repositories |
 | `contract "<goal>"` | Drafts `.proofline/contract.yaml` |
 | `approve` | Locks the contract as it stands |
 | `plan` | Drafts `.proofline/plan.yaml` and validates it against the contract |
@@ -157,6 +159,27 @@ proofline go "Let users export their invoices as CSV from the billing page"
 | `clean` | Removes a run's worktrees; the branch and the records stay |
 
 `run` exits 0 when the contract is proven and 2 when it is not, so it can gate a pipeline.
+
+### A frontend and a backend in one delivery
+
+Most real features cross a seam: an endpoint in one repository, the screen that calls it in another. Run proofline in the folder that holds both and tell it once which repositories belong together:
+
+```sh
+cd ~/work/shop                      # holds api/ and web/, each its own git repository
+proofline init --repos api,web
+proofline ui
+```
+
+From then on that folder is a workspace, and a run is one delivery across it:
+
+- **One contract, one plan.** Each task names the repository it changes. A task that depends on the other side (`needs`) starts after that side is merged and can read it, so a screen is built against the endpoint that exists, not the one the builder imagines.
+- **Verified together.** Proofs run only after every side is delivered, in a copy where the repositories sit side by side, each with all of its work merged. Commands start by entering a repository (`cd api && npm test -- greeting`). A review proof can ask about the seam itself: does the request the frontend sends match what the backend accepts, field by field?
+- **Fixed across the seam.** When a line fails, the fixer gets every repository and is told to correct the side that is wrong, not to patch one to fit a mistake in the other.
+- **A pull request per repository**, each into the branch that repository was on when the run started, each pointing at the other.
+
+A builder never writes into another repository: what it reads there is a separate copy, wiped before the next task uses it. Your own checkouts are not touched, as in a single repository.
+
+![A run across an API and a web client: one task per repository, eight requirements checked with both merged](docs/ui-workspace.png)
 
 ### The contract
 
@@ -186,13 +209,23 @@ The contract is plain YAML in your repository. Write it by hand, let the planner
 ```yaml
 concurrency: 3        # builders at the same time
 maxFixRounds: 2       # times failed criteria go back to a builder
-setup: "npm ci"       # run before command proofs in the integration worktree
+setup: "npm ci"       # prepares every copy of the repository: each task's, and the one the proofs run in
 auth: subscription    # or "inherit" to pass API keys through
 models:               # alias or id per role; empty = your Claude Code default
   planner: opus
   builder: sonnet
   verifier: sonnet
 claudeArgs: []        # extra arguments for every agent, e.g. ["--setting-sources", "project"]
+```
+
+`setup` runs with `PROOFLINE_SOURCE` set to your own checkout, for what git does not track: `ln -sfn "$PROOFLINE_SOURCE/node_modules" node_modules` is faster than a fresh install, and whatever the command leaves behind is kept out of the commits. In a workspace each repository has its own:
+
+```yaml
+repos:
+  - path: api
+    setup: cp "$PROOFLINE_SOURCE/config/master.key" config/
+  - path: web
+    setup: ln -sfn "$PROOFLINE_SOURCE/node_modules" node_modules
 ```
 
 A single task can use a different model from the other builders: set `model:` on it in `.proofline/plan.yaml`, or pick it on the Plan screen.
@@ -211,7 +244,7 @@ A single task can use a different model from the other builders: set `model:` on
 
 **State on disk, not in a conversation.** Every transition is written to `.proofline/runs/<id>/state.json`. Kill a run, hit a usage limit, close the laptop: `proofline run --resume` picks up with the merged work intact and rebuilds only what was unfinished.
 
-**Small surface.** The orchestrator and its server are about 2,900 lines of TypeScript with one runtime dependency (a YAML parser); the control room is about 1,800 lines of React, built ahead of time. The agent runtime sits behind a single-method interface, [`Engine`](src/engine.ts), which is also how the test suite runs whole orchestrations, and the server's API, with scripted agents and real git, in a few seconds and without spending a token.
+**Small surface.** The orchestrator and its server are about 3,400 lines of TypeScript with one runtime dependency (a YAML parser); the control room is about 1,900 lines of React, built ahead of time. The agent runtime sits behind a single-method interface, [`Engine`](src/engine.ts), which is also how the test suite runs whole orchestrations, and the server's API, with scripted agents and real git, in a few seconds and without spending a token.
 
 More in [docs/design.md](docs/design.md).
 
@@ -220,7 +253,7 @@ More in [docs/design.md](docs/design.md).
 - **A weak proof proves little.** If the contract says `npm test` and the builder writes a test that asserts nothing, the line passes. The defence is the human approval of the contract and the lint; it is not automatic.
 - **Builders run shell commands** in their worktree with your user's permissions. Point proofline at repositories and goals you would hand to Claude Code directly, or run it in a container.
 - **Review proofs are judgement.** They are independent and must cite evidence, but they are still a model reading code. Prefer commands.
-- **One repository per run.** A change that spans repositories needs one contract in each.
+- **A workspace is not a transaction.** Its pull requests are opened together and point at each other, but nothing stops one being merged without the other.
 - **Claude Code is the only engine today.** Others fit behind the same interface.
 
 ## Development
@@ -230,7 +263,7 @@ npm install
 npm test
 ```
 
-The tests in [`test/run.test.ts`](test/run.test.ts) are the best tour of the behaviour: a builder that falsely reports "done" and is caught by its proof, two tasks that collide, a run that is stopped or interrupted and resumed, and a contract edited mid-run. [`test/server.test.ts`](test/server.test.ts) drives the control room's API the same way.
+The tests in [`test/run.test.ts`](test/run.test.ts) are the best tour of the behaviour: a builder that falsely reports "done" and is caught by its proof, two tasks that collide, a run that is stopped or interrupted and resumed, and a contract edited mid-run. [`test/workspace.test.ts`](test/workspace.test.ts) does the same for a delivery across two repositories. [`test/server.test.ts`](test/server.test.ts) drives the control room's API the same way.
 
 To rebuild the recorded demo from a run of your own: finish a run with `proofline ui` open, then `node scripts/export-demo.mjs` and `node scripts/build-demo.mjs`.
 
