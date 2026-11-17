@@ -5,7 +5,7 @@ import { integrationDir } from './runner.js';
 import { REVIEW_SCHEMA, reviewPrompt, type ReviewOutput } from './prompts.js';
 import { runDir, saveState } from './state.js';
 import type { Contract, Criterion, ProofResult, RunState, VerificationRound } from './types.js';
-import { exec, git, mapLimit, tail } from './util.js';
+import { AbortError, exec, git, isAbort, mapLimit, tail } from './util.js';
 
 /**
  * Check every criterion of the contract against the integration branch as it now stands.
@@ -20,6 +20,7 @@ export async function verifyRun(ctx: Ctx, state: RunState, contract: Contract): 
   const evidenceDir = path.join(runDir(ctx.root, state.id), 'evidence', `round-${n}`);
   mkdirSync(evidenceDir, { recursive: true });
   state.status = 'verifying';
+  state.progress = [];
   saveState(ctx.root, state);
   ctx.log(`verifying ${contract.criteria.length} criteria at ${head.slice(0, 7)} (round ${n})`);
 
@@ -32,13 +33,17 @@ export async function verifyRun(ctx: Ctx, state: RunState, contract: Contract): 
 
   const results = new Map<string, ProofResult>();
   const record = (r: ProofResult) => {
+    r.at = new Date().toISOString();
     results.set(r.criterion, r);
+    state.progress?.push(r);
+    saveState(ctx.root, state);
     ctx.log(`${r.verdict === 'pass' ? '✓' : '✗'} ${r.criterion} (${r.proofType})`);
   };
 
   // Command proofs run one at a time: they may share build output, ports or databases.
   for (const c of contract.criteria) {
     if (c.proof.type !== 'command') continue;
+    if (ctx.signal?.aborted) throw new AbortError();
     if (setupFailure) {
       record({ criterion: c.id, proofType: 'command', verdict: 'fail', evidence: setupFailure, durationMs: 0 });
       continue;
@@ -70,6 +75,7 @@ export async function verifyRun(ctx: Ctx, state: RunState, contract: Contract): 
     results: contract.criteria.map((c) => results.get(c.id)!),
   };
   state.rounds.push(round);
+  state.progress = undefined;
   saveState(ctx.root, state);
   return round;
 }
@@ -108,6 +114,7 @@ async function review(ctx: Ctx, state: RunState, c: Criterion, cwd: string, diff
       prompt: reviewPrompt(c, check, diffStat),
       schema: REVIEW_SCHEMA,
       write: false,
+      signal: ctx.signal,
     });
     ctx.track(state, 'verifier', res);
     return {
@@ -118,6 +125,7 @@ async function review(ctx: Ctx, state: RunState, c: Criterion, cwd: string, diff
       durationMs: Date.now() - started,
     };
   } catch (e) {
+    if (isAbort(e)) throw e;
     // A verifier that could not answer has not proven anything.
     return {
       criterion: c.id,

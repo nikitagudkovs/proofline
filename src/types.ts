@@ -25,6 +25,8 @@ export interface Task {
   covers: string[];
   /** Task ids that must be merged before this one starts. */
   needs: string[];
+  /** Model for this task's builder. Empty means the builder model from the settings. */
+  model?: string;
 }
 
 export interface Plan {
@@ -61,6 +63,8 @@ export interface ProofResult {
   /** Full output of a command proof, relative to the run directory. */
   logFile?: string;
   durationMs: number;
+  /** When this proof finished. */
+  at?: string;
 }
 
 export interface VerificationRound {
@@ -79,7 +83,7 @@ export interface Usage {
   durationMs: number;
 }
 
-export type RunStatus = 'building' | 'verifying' | 'proven' | 'unproven';
+export type RunStatus = 'building' | 'verifying' | 'proven' | 'unproven' | 'stopped';
 
 export interface RunState {
   id: string;
@@ -99,6 +103,8 @@ export interface RunState {
    */
   baseline?: Record<string, Verdict>;
   rounds: VerificationRound[];
+  /** Verdicts of the verification round in progress, so they can be shown as they arrive. */
+  progress?: ProofResult[];
   usage: Record<'planner' | 'builder' | 'verifier', Usage>;
   prUrl?: string;
 }

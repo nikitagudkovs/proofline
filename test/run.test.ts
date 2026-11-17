@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { createRun, executeRun } from '../src/runner.js';
-import { loadState, runDir } from '../src/state.js';
+import { createRun, executeRun, withSessions, type Ctx } from '../src/runner.js';
+import { listSessions, readSession } from '../src/sessions.js';
+import { loadState, runDir, sessionsDir } from '../src/state.js';
 import { git } from '../src/util.js';
-import { ScriptedEngine, done, fixture, writes } from './helpers.js';
+import { ScriptedEngine, done, fixture, hangs, writes } from './helpers.js';
 
 const CONTRACT = `
 goal: Ship three files and document them
@@ -42,7 +43,8 @@ test('a run builds in parallel, catches a false "done", sends it back and ends p
     state.rounds[0].results.map((r) => [r.criterion, r.verdict]),
     [['C1', 'pass'], ['C2', 'fail'], ['C3', 'pass'], ['C4', 'pass']],
   );
-  assert.ok(state.rounds[1].results.every((r) => r.verdict === 'pass'));
+  assert.ok(state.rounds[1].results.every((r) => r.verdict === 'pass' && r.at));
+  assert.equal(state.progress, undefined);
 
   // Before any work, every command proof was shown to fail: each one can tell done from not done.
   assert.deepEqual(state.baseline, { C1: 'fail', C2: 'fail', C3: 'fail' });
@@ -205,4 +207,82 @@ test('a run refuses to continue when the contract changed underneath it', async 
   writeFileSync(file, readFileSync(file, 'utf8').replace('grep -q hello b.txt', 'true'));
 
   await assert.rejects(executeRun(ctx, state), /changed after it was approved/);
+});
+
+test('every agent run leaves a session record: the brief, the steps, the answer', async () => {
+  const fx = await fixture(CONTRACT, PLAN);
+  const engine = new ScriptedEngine({
+    T1: writes({ 'a.txt': 'a\n' }),
+    T2: writes({ 'b.txt': 'hello\n' }),
+    T3: writes({ 'c.txt': 'a.txt\nb.txt\n' }),
+    C4: () => ({ verdict: 'pass', evidence: 'README.md:1' }),
+  });
+  const base = fx.ctx(engine);
+  const state = await createRun(base);
+  const seen: string[] = [];
+  await executeRun(withSessions(base, state.id, (meta, event) => event && seen.push(`${meta.id}:${event.kind}`)), state);
+
+  const dir = sessionsDir(fx.root, state.id);
+  const sessions = listSessions(dir);
+  assert.deepEqual(sessions.map((s) => s.id).sort(), ['C4-1', 'T1-1', 'T2-1', 'T3-1']);
+  assert.ok(sessions.every((s) => s.status === 'done' && s.model === 'scripted' && s.endedAt));
+
+  const t3 = readSession(dir, 'T3-1');
+  assert.equal(t3.meta.role, 'builder');
+  assert.deepEqual(t3.meta.tools, { Write: 1 });
+  assert.match(t3.meta.prompt, /Your task T3: index and docs/);
+  assert.deepEqual((t3.meta.output as { status: string }).status, 'done');
+  assert.deepEqual(t3.events.map((e) => [e.kind, e.text]), [['start', 'session started on scripted'], ['tool', 'c.txt']]);
+  assert.ok(seen.includes('T3-1:tool'));
+  assert.throws(() => readSession(dir, '../state'), /No session/);
+});
+
+test('a run can be stopped mid-build and resumed without losing merged work', async () => {
+  const fx = await fixture(CONTRACT, PLAN);
+  const abort = new AbortController();
+  const first = new ScriptedEngine({
+    T1: writes({ 'a.txt': 'a\n' }),
+    T2: writes({ 'b.txt': 'hello\n' }),
+    // Wave 2 starts, then the person presses Stop.
+    T3: (req, attempt) => {
+      setTimeout(() => abort.abort(), 10);
+      return hangs(req, attempt);
+    },
+  });
+  let ctx: Ctx = { ...fx.ctx(first), signal: abort.signal };
+  let state = await executeRun(ctx, await createRun(ctx));
+
+  assert.equal(state.status, 'stopped');
+  assert.equal(state.tasks.T1.status, 'merged');
+  assert.equal(state.tasks.T3.status, 'pending');
+  assert.equal(state.rounds.length, 0);
+
+  const second = new ScriptedEngine({
+    T3: writes({ 'c.txt': 'a.txt\nb.txt\n' }),
+    C4: () => ({ verdict: 'pass', evidence: 'README.md:1' }),
+  });
+  ctx = fx.ctx(second);
+  state = await executeRun(ctx, loadState(fx.root, state.id));
+  assert.equal(state.status, 'proven');
+  assert.deepEqual(second.requests.filter((r) => r.role === 'builder').map((r) => r.label), ['T3']);
+});
+
+test('a task can be built by a different model than the rest', async () => {
+  const fx = await fixture(
+    CONTRACT,
+    PLAN.replace('{ id: T1, title: write a,', '{ id: T1, model: opus, title: write a,'),
+  );
+  fx.cfg.models.builder = 'sonnet';
+  const engine = new ScriptedEngine({
+    T1: writes({ 'a.txt': 'a\n' }),
+    T2: writes({ 'b.txt': 'hello\n' }),
+    T3: writes({ 'c.txt': 'a.txt\nb.txt\n' }),
+    C4: () => ({ verdict: 'pass', evidence: 'README.md:1' }),
+  });
+  const ctx = fx.ctx(engine);
+  await executeRun(ctx, await createRun(ctx));
+
+  const model = (label: string) => engine.requests.find((r) => r.label === label)!.model;
+  assert.equal(model('T1'), 'opus');
+  assert.equal(model('T2'), undefined); // falls back to the builder model from the settings
 });

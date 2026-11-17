@@ -14,31 +14,60 @@ export interface ExecOptions {
   timeoutMs?: number;
   /** Run through `sh -c` in its own process group, so a timeout kills the whole tree. */
   shell?: boolean;
+  /** Give the process its own group, so stopping it also stops whatever it started. */
+  group?: boolean;
+  /** Called with each complete line of stdout as it arrives. */
+  onLine?: (line: string) => void;
+  /** Aborting kills the process; the promise then rejects with an AbortError. */
+  signal?: AbortSignal;
 }
+
+export class AbortError extends Error {
+  constructor(message = 'stopped') {
+    super(message);
+    this.name = 'AbortError';
+  }
+}
+
+export const isAbort = (e: unknown): boolean => e instanceof Error && e.name === 'AbortError';
 
 const MAX_CAPTURE = 5 * 1024 * 1024;
 
 export function exec(cmd: string, args: string[], opts: ExecOptions = {}): Promise<ExecResult> {
   return new Promise((resolve, reject) => {
+    const group = opts.shell || opts.group;
     const child = opts.shell
       ? spawn('sh', ['-c', cmd], { cwd: opts.cwd, env: opts.env ?? process.env, detached: true })
-      : spawn(cmd, args, { cwd: opts.cwd, env: opts.env ?? process.env });
+      : spawn(cmd, args, { cwd: opts.cwd, env: opts.env ?? process.env, detached: !!opts.group });
     let stdout = '';
     let stderr = '';
     let timedOut = false;
+    let pending = '';
+    const kill = () => {
+      try {
+        if (group && child.pid) process.kill(-child.pid, 'SIGKILL');
+        else child.kill('SIGKILL');
+      } catch {
+        // already gone
+      }
+    };
+    if (opts.signal?.aborted) kill();
+    opts.signal?.addEventListener('abort', kill, { once: true });
     const cap = (s: string) => (s.length > MAX_CAPTURE ? s.slice(-MAX_CAPTURE) : s);
     const timer = opts.timeoutMs
       ? setTimeout(() => {
           timedOut = true;
-          try {
-            if (opts.shell && child.pid) process.kill(-child.pid, 'SIGKILL');
-            else child.kill('SIGKILL');
-          } catch {
-            // already gone
-          }
+          kill();
         }, opts.timeoutMs)
       : undefined;
-    child.stdout.on('data', (d) => (stdout = cap(stdout + d)));
+    child.stdout.on('data', (d) => {
+      stdout = cap(stdout + d);
+      if (!opts.onLine) return;
+      pending += d;
+      const lines = pending.split('\n');
+      pending = lines.pop() ?? '';
+      for (const line of lines) opts.onLine(line);
+    });
     child.stderr.on('data', (d) => (stderr = cap(stderr + d)));
     child.on('error', (e) => {
       clearTimeout(timer);
@@ -46,7 +75,10 @@ export function exec(cmd: string, args: string[], opts: ExecOptions = {}): Promi
     });
     child.on('close', (code) => {
       clearTimeout(timer);
-      resolve({ code: code ?? 1, stdout, stderr, timedOut });
+      opts.signal?.removeEventListener('abort', kill);
+      if (pending && opts.onLine) opts.onLine(pending);
+      if (opts.signal?.aborted) reject(new AbortError());
+      else resolve({ code: code ?? 1, stdout, stderr, timedOut });
     });
     child.stdin.on('error', () => {});
     child.stdin.end(opts.input ?? '');
@@ -81,7 +113,10 @@ export async function mapLimit<T, R>(
       out[i] = await fn(items[i], i);
     }
   };
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+  // Wait for every worker even when one fails, so nothing is still running when the error surfaces.
+  const settled = await Promise.allSettled(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+  const failed = settled.find((s) => s.status === 'rejected');
+  if (failed) throw (failed as PromiseRejectedResult).reason;
   return out;
 }
 

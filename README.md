@@ -45,6 +45,30 @@ One minute, start to finish. The contract, plan and full report of this run are 
 
 ![The report: each requirement with its proof, who built it, the commits and the evidence](docs/report.png)
 
+## The control room
+
+```sh
+proofline ui
+```
+
+opens a local page for the repository you are in. Everything the command line does is there, plus what a terminal cannot show: agents working at the same moment.
+
+![The run screen: tasks being built on the left, the contract being checked on the right](docs/ui-run.png)
+
+| Screen | What you see and control |
+|---|---|
+| **Contract** | Type a goal and let the planner draft the contract, or write it yourself. Edit any requirement or proof, then approve. An edit after approval visibly voids it. |
+| **Plan** | The building blocks: tasks grouped into waves that run in parallel, a coverage strip that turns red for a requirement nobody is responsible for, and a model picker on every task. |
+| **Run** | Start, stop and resume. Each task shows its status and the step its agent is on right now; each requirement shows whether its proof failed before the work, its verdict per round, and the evidence. |
+| **Sessions** | Every agent run, live and past. Open one for its report: the brief it was given, each step it took, what it answered, what it committed, its model, time and cost. |
+| **Models** | Which model plans, builds and verifies; how many agents run at once; how often a failed line is sent back; and which accounts the run uses. |
+
+![One agent session: facts, its own report, the changes it committed, and each step](docs/ui-session.png)
+
+A recorded real run can be replayed in the same interface without installing anything: open [`demo/index.html`](demo/index.html) from a checkout.
+
+The page is served on `127.0.0.1` only. Because it can start agents that run shell commands, every request must carry a token that only the served page knows, and requests with an unknown `Host` are refused, so no other website open in your browser can drive it.
+
 ## How it works
 
 ```mermaid
@@ -81,7 +105,8 @@ npm install && npm link
 Then, in the repository you want to work on:
 
 ```sh
-proofline doctor
+proofline ui        # the control room, in your browser
+proofline doctor    # or, in the terminal: which accounts a run will use
 ```
 
 ```
@@ -100,7 +125,7 @@ proofline holds no credentials and asks for none.
 
 ## Use
 
-Step by step, with a human gate after each stage:
+Everything below also works from the control room (`proofline ui`). From a terminal, step by step, with a human gate after each stage:
 
 ```sh
 proofline contract "Let users export their invoices as CSV from the billing page"
@@ -120,6 +145,7 @@ proofline go "Let users export their invoices as CSV from the billing page"
 
 | Command | What it does |
 |---|---|
+| `ui` | Opens the control room in your browser |
 | `doctor` | Shows which GitHub account and Claude login a run will use |
 | `contract "<goal>"` | Drafts `.proofline/contract.yaml` |
 | `approve` | Locks the contract as it stands |
@@ -166,7 +192,10 @@ models:               # alias or id per role; empty = your Claude Code default
   planner: opus
   builder: sonnet
   verifier: sonnet
+claudeArgs: []        # extra arguments for every agent, e.g. ["--setting-sources", "project"]
 ```
+
+A single task can use a different model from the other builders: set `model:` on it in `.proofline/plan.yaml`, or pick it on the Plan screen.
 
 ## Design decisions
 
@@ -182,7 +211,7 @@ models:               # alias or id per role; empty = your Claude Code default
 
 **State on disk, not in a conversation.** Every transition is written to `.proofline/runs/<id>/state.json`. Kill a run, hit a usage limit, close the laptop: `proofline run --resume` picks up with the merged work intact and rebuilds only what was unfinished.
 
-**Small surface.** About 2,000 lines of TypeScript and one dependency (a YAML parser). The agent runtime sits behind a single-method interface, [`Engine`](src/engine.ts), which is also how the test suite runs whole orchestrations with scripted agents and real git, in a few seconds and without spending a token.
+**Small surface.** The orchestrator and its server are about 2,900 lines of TypeScript with one runtime dependency (a YAML parser); the control room is about 1,800 lines of React, built ahead of time. The agent runtime sits behind a single-method interface, [`Engine`](src/engine.ts), which is also how the test suite runs whole orchestrations, and the server's API, with scripted agents and real git, in a few seconds and without spending a token.
 
 More in [docs/design.md](docs/design.md).
 
@@ -201,7 +230,9 @@ npm install
 npm test
 ```
 
-The tests in [`test/run.test.ts`](test/run.test.ts) are the best tour of the behaviour: a builder that falsely reports "done" and is caught by its proof, two tasks that collide, a run that is interrupted and resumed, and a contract edited mid-run.
+The tests in [`test/run.test.ts`](test/run.test.ts) are the best tour of the behaviour: a builder that falsely reports "done" and is caught by its proof, two tasks that collide, a run that is stopped or interrupted and resumed, and a contract edited mid-run. [`test/server.test.ts`](test/server.test.ts) drives the control room's API the same way.
+
+To rebuild the recorded demo from a run of your own: finish a run with `proofline ui` open, then `node scripts/export-demo.mjs` and `node scripts/build-demo.mjs`.
 
 ## License
 

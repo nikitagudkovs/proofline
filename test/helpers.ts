@@ -5,7 +5,7 @@ import { DEFAULTS, type Config } from '../src/config.js';
 import { DIR, approveContract } from '../src/contract.js';
 import type { AgentRequest, AgentResult, Engine } from '../src/engine.js';
 import { makeCtx, type Ctx } from '../src/runner.js';
-import { git } from '../src/util.js';
+import { AbortError, git } from '../src/util.js';
 
 type Handler = (req: AgentRequest, attempt: number) => unknown | Promise<unknown>;
 
@@ -27,7 +27,9 @@ export class ScriptedEngine implements Engine {
     this.active += 1;
     this.maxParallel = Math.max(this.maxParallel, this.active);
     try {
+      req.onEvent?.({ kind: 'start', text: 'session started on scripted', model: 'scripted' });
       await new Promise((r) => setTimeout(r, 30));
+      if (req.signal?.aborted) throw new AbortError();
       const output = (await handler(req, attempt)) as T;
       return { output, turns: 1, costUsd: 0.01, durationMs: 30, sessionId: `s-${req.label}-${attempt}` };
     } finally {
@@ -38,6 +40,10 @@ export class ScriptedEngine implements Engine {
 
 export const done = (summary = 'built', notes = '') => ({ status: 'done', summary, notes });
 
+/** A builder that never finishes by itself: it works until the run is stopped. */
+export const hangs: Handler = (req) =>
+  new Promise((_, reject) => req.signal!.addEventListener('abort', () => reject(new AbortError()), { once: true }));
+
 /** A builder that writes files into its worktree. */
 export const writes =
   (files: Record<string, string>, notes = ''): Handler =>
@@ -45,6 +51,7 @@ export const writes =
     for (const [name, content] of Object.entries(files)) {
       mkdirSync(path.dirname(path.join(req.cwd, name)), { recursive: true });
       writeFileSync(path.join(req.cwd, name), content);
+      req.onEvent?.({ kind: 'tool', tool: 'Write', text: name });
     }
     return done(`wrote ${Object.keys(files).join(', ')}`, notes);
   };

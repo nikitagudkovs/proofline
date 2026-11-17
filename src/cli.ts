@@ -10,14 +10,18 @@ import { doctor } from './doctor.js';
 import { ClaudeCodeEngine } from './engine.js';
 import { loadPlan, planPath, renderPlan, validatePlan } from './plan.js';
 import { writeReport } from './report.js';
-import { cleanRun, createRun, excludeRunsDir, executeRun, makeCtx, type Ctx } from './runner.js';
-import { latestRun, listRuns, loadState, runDir, saveState } from './state.js';
+import { startServer } from './server.js';
+import { shipRun } from './ship.js';
+import { cleanRun, createRun, excludeRunsDir, executeRun, makeCtx, withSessions, type Ctx } from './runner.js';
+import { AUTHORING, latestRun, listRuns, loadState, runDir, saveState } from './state.js';
 import type { RunState } from './types.js';
 import { exec, git } from './util.js';
 import { verifyRun } from './verify.js';
 
 const HELP = `proofline: a contract-first orchestrator for coding agents
 
+  proofline ui                  open the control room in your browser: contract, tasks,
+                                live agent sessions, models, reports
   proofline doctor              show which GitHub account and Claude login a run will use
   proofline init                add .proofline/ with default settings
   proofline contract "<goal>"   draft a contract: numbered criteria, each with a proof
@@ -37,6 +41,8 @@ Options
   --concurrency N   run: builders at the same time
   --yes             go: approve the drafted contract without asking
   --draft           ship: open a draft pull request, allowed even when not proven
+  --port N          ui: port to listen on (default 4717)
+  --no-open         ui: do not open the browser
 `;
 
 const { values: flags, positionals } = parseArgs({
@@ -47,6 +53,9 @@ const { values: flags, positionals } = parseArgs({
     concurrency: { type: 'string' },
     yes: { type: 'boolean', default: false },
     draft: { type: 'boolean', default: false },
+    port: { type: 'string' },
+    host: { type: 'string' },
+    'no-open': { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h', default: false },
   },
 });
@@ -119,7 +128,7 @@ const commands: Record<string, (ctx: Ctx) => Promise<number>> = {
     const goal = positionals.slice(1).join(' ').trim();
     if (!goal) throw new Error('Say what you want built: proofline contract "<goal>"');
     log('drafting the contract (the planner reads the repository first)');
-    const contract = await draftContract(ctx, goal);
+    const contract = await draftContract(withSessions(ctx, AUTHORING), goal);
     console.log(`\n${renderContract(contract)}\n`);
     for (const w of lintContract(contract)) console.log(`${paint(33, 'note')} ${w}`);
     console.log(`Saved to ${path.relative(process.cwd(), contractPath(ctx.root))}. Edit it until it says what you mean, then: proofline approve`);
@@ -137,7 +146,7 @@ const commands: Record<string, (ctx: Ctx) => Promise<number>> = {
 
   async plan(ctx) {
     log('planning tasks for the approved contract');
-    const plan = await draftPlan(ctx);
+    const plan = await draftPlan(withSessions(ctx, AUTHORING));
     console.log(`\n${renderPlan(plan)}\n`);
     console.log(`Saved to ${path.relative(process.cwd(), planPath(ctx.root))}.\nNext: proofline run`);
     return 0;
@@ -154,7 +163,7 @@ const commands: Record<string, (ctx: Ctx) => Promise<number>> = {
       state = await createRun(ctx);
       log(`run ${state.id} started on branch ${state.branch}`);
     }
-    return finish(ctx, await executeRun(ctx, state));
+    return finish(ctx, await executeRun(withSessions(ctx, state.id), state));
   },
 
   async verify(ctx) {
@@ -162,7 +171,7 @@ const commands: Record<string, (ctx: Ctx) => Promise<number>> = {
     const { contract, hash } = loadApprovedContract(ctx.root);
     if (hash !== state.contractHash) throw new Error('The contract changed since this run. Start a new run.');
     const plan = loadPlan(ctx.root);
-    const round = await verifyRun(ctx, state, contract);
+    const round = await verifyRun(withSessions(ctx, state.id), state, contract);
     state.status = round.results.every((r) => r.verdict === 'pass') ? 'proven' : 'unproven';
     saveState(ctx.root, state);
     writeReport(ctx.root, state, contract, plan);
@@ -205,21 +214,24 @@ const commands: Record<string, (ctx: Ctx) => Promise<number>> = {
 
   async ship(ctx) {
     const state = pickRun(ctx.root);
-    if (state.status !== 'proven' && !flags.draft) {
-      throw new Error(`Run ${state.id} is not proven, so it does not ship. Use --draft to open a draft pull request anyway.`);
+    console.log(await shipRun(ctx, state, flags.draft));
+    return 0;
+  },
+
+  async ui(ctx) {
+    const server = await startServer(ctx.root, {
+      port: Number(flags.port ?? 4717),
+      host: flags.host ?? '127.0.0.1',
+      allowedHosts: process.env.PROOFLINE_ALLOWED_HOSTS?.split(','),
+    });
+    console.log(`proofline control room for ${path.basename(ctx.root)}: ${bold(server.url)}`);
+    console.log(dim('It answers only on this machine. Press Ctrl+C to stop it; a run in progress can be resumed.'));
+    if (!flags['no-open']) {
+      const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
+      exec(opener, [server.url], {}).catch(() => {});
     }
-    const { contract } = loadApprovedContract(ctx.root);
-    const { md } = writeReport(ctx.root, state, contract, loadPlan(ctx.root));
-    log(`pushing ${state.branch}`);
-    await git(ctx.root, 'push', '-u', 'origin', state.branch);
-    const title = contract.goal.split(/(?<=[.!?])\s/)[0].slice(0, 72);
-    const args = ['pr', 'create', '--base', state.baseBranch, '--head', state.branch, '--title', title, '--body-file', md];
-    if (flags.draft) args.push('--draft');
-    const pr = await exec('gh', args, { cwd: ctx.root });
-    if (pr.code !== 0) throw new Error(`gh pr create failed: ${pr.stderr.trim()}`);
-    state.prUrl = pr.stdout.trim().split('\n').pop();
-    saveState(ctx.root, state);
-    console.log(state.prUrl);
+    await new Promise<void>((resolve) => process.once('SIGINT', resolve));
+    await server.close();
     return 0;
   },
 
@@ -234,7 +246,7 @@ const commands: Record<string, (ctx: Ctx) => Promise<number>> = {
     const goal = positionals.slice(1).join(' ').trim();
     if (!goal) throw new Error('Say what you want built: proofline go "<goal>"');
     log('drafting the contract');
-    const contract = await draftContract(ctx, goal);
+    const contract = await draftContract(withSessions(ctx, AUTHORING), goal);
     console.log(`\n${renderContract(contract)}\n`);
     for (const w of lintContract(contract)) console.log(`${paint(33, 'note')} ${w}`);
     if (!flags.yes) {
@@ -249,12 +261,12 @@ const commands: Record<string, (ctx: Ctx) => Promise<number>> = {
     }
     const hash = approveContract(ctx.root);
     log(`contract approved (${hash}); planning`);
-    const plan = await draftPlan(ctx);
+    const plan = await draftPlan(withSessions(ctx, AUTHORING));
     validatePlan(plan, contract, hash);
     console.log(`\n${renderPlan(plan)}\n`);
     const state = await createRun(ctx);
     log(`run ${state.id} started on branch ${state.branch}`);
-    return finish(ctx, await executeRun(ctx, state));
+    return finish(ctx, await executeRun(withSessions(ctx, state.id), state));
   },
 };
 

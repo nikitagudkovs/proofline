@@ -9,6 +9,7 @@
   },
   "files": [
     "dist/src",
+    "dist/ui",
     "README.md",
     "LICENSE"
   ],
@@ -16,9 +17,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "tsc -p .",
+    "build": "tsc -p . && tsc -p ui && vite build --config ui/vite.config.ts",
     "test": "tsc -p . && node --test dist/test/*.test.js",
-    "prepare": "tsc -p ."
+    "prepare": "npm run build"
   },
   "keywords": [
     "agents",
@@ -33,6 +34,12 @@
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
-    "typescript": "^5.6.3"
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.7.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.21"
   }
 }

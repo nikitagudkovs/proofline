@@ -22,6 +22,8 @@ export interface Config {
   /** Model alias or id per role. Empty means your Claude Code default. */
   models: { planner: string; builder: string; verifier: string };
   builder: { permissionMode: string; allowedTools: string[] };
+  /** Extra arguments for every `claude` process, e.g. ["--setting-sources", "project"]. */
+  claudeArgs: string[];
   timeouts: { plannerMin: number; builderMin: number; verifierMin: number; commandSec: number };
 }
 
@@ -36,6 +38,7 @@ export const DEFAULTS: Config = {
     permissionMode: 'acceptEdits',
     allowedTools: ['Bash', 'Edit', 'Write', 'Read', 'Glob', 'Grep'],
   },
+  claudeArgs: [],
   timeouts: { plannerMin: 15, builderMin: 45, verifierMin: 10, commandSec: 600 },
 };
 

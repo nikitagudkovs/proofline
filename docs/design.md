@@ -21,8 +21,11 @@ src/
   verify.ts     baseline and verification rounds: command proofs and review proofs
   report.ts     the traceability matrix as Markdown and HTML
   engine.ts     the agent runtime behind one method; Claude Code implementation
+  sessions.ts   a record of every agent run: brief, steps, answer
+  server.ts     the control room's local HTTP API and live event stream
   doctor.ts     which accounts a run will use
   cli.ts        commands
+ui/             the control room itself (React), built into dist/ui
 ```
 
 ## Three roles, three levels of trust
@@ -77,6 +80,23 @@ Builders cannot edit the contract, and they are told not to bend the product aro
 
 A run is bound to the contract hash it started with. If the contract changed, resume refuses.
 
+## Sessions: every agent run is a record
+
+The engine is wrapped by a recorder. For each agent run it writes two files under the run: a summary (role, model actually used, status, turns, time, cost, tools used, the brief, the structured answer) and an append-only list of steps, taken from Claude Code's event stream as it arrives. The command line and the control room share these files, so a run started in a terminal can be watched in the browser.
+
+Steps are reduced to what a person wants to follow: what the agent said, each tool call in one line, and tool results only when they failed.
+
+## The control room
+
+`proofline ui` starts a small HTTP server on `127.0.0.1` over the same functions the commands call. It holds no state of its own beyond the job in progress: the contract, plan, run state, sessions and log are the files on disk, and the browser is told to re-read them through a server-sent event stream whenever one changes.
+
+- **One job at a time.** Drafting, planning, running, verifying and shipping all work on the same repository, so a second job is refused while one is active.
+- **Stop is a first-class state.** Stopping aborts the agents (each runs in its own process group, so the commands it started die with it), puts unfinished tasks back to pending and leaves the run resumable.
+- **It answers only to its own page.** The server can start agents that run shell commands, so two checks guard every request: a random token embedded in the served page (another site cannot read it, so it cannot forge requests) and a `Host` allow-list (a hostile page cannot reach it by pointing its own domain at 127.0.0.1).
+- **Models are a person's choice.** Per role in the settings, per task in the plan. The planner never picks them.
+
+The same interface doubles as a recording player: a build flag swaps the server for one exported run and a clock, which is how the public demo replays a real run with nothing behind it.
+
 ## The engine interface
 
 ```ts
@@ -88,18 +108,21 @@ interface Engine {
     cwd: string;
     schema: object;   // JSON Schema for the final answer
     write: boolean;
-  }): Promise<{ output: T; turns: number; costUsd: number; durationMs: number; sessionId?: string }>;
+    model?: string;                      // per-task override
+    onEvent?: (e: AgentEvent) => void;   // live steps
+    signal?: AbortSignal;                // stop
+  }): Promise<{ output: T; turns: number; costUsd: number; durationMs: number; sessionId?: string; model?: string }>;
 }
 ```
 
-`ClaudeCodeEngine` spawns `claude -p --output-format json --json-schema …` per request, with read-only tools for planners and verifiers. Because it drives the installed CLI rather than an API client, a run uses the user's existing Claude Code login, and with `auth: subscription` the API-key variables are stripped from the child's environment.
+`ClaudeCodeEngine` spawns `claude -p --output-format stream-json --json-schema …` per request, with read-only tools for planners and verifiers. Because it drives the installed CLI rather than an API client, a run uses the user's existing Claude Code login, and with `auth: subscription` the API-key variables are stripped from the child's environment.
 
 The test suite implements the same interface with scripted agents that write real files into real worktrees, which lets it exercise merges, conflicts, fix rounds and resume end to end without a model.
 
 ## Deliberately left out
 
 - **Agents talking to each other.** Tasks communicate through the merged code and a short notes field. Chat between agents is hard to audit and easy to derail.
-- **A dashboard server.** State is a JSON file and the report is a static HTML page; both can be read without proofline running.
+- **A hosted service or a database.** The control room is a local process over plain files. State is JSON, the report is a static HTML page, and both can be read without proofline running.
 - **Automatic conflict resolution, automatic contract edits, automatic merging to the main branch.** Each of these would let an agent change what "done" means.
 
 ## Where it could go

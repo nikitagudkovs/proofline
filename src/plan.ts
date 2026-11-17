@@ -18,6 +18,7 @@ export function parsePlan(text: string): Plan {
       brief: String(t.brief ?? '').trim(),
       covers: Array.isArray(t.covers) ? t.covers.map(String) : [],
       needs: Array.isArray(t.needs) ? t.needs.map(String) : [],
+      ...(typeof t.model === 'string' && t.model.trim() ? { model: t.model.trim() } : {}),
     };
   });
   return { contractHash: String(raw.contract_hash ?? ''), tasks };
@@ -26,7 +27,14 @@ export function parsePlan(text: string): Plan {
 export function serializePlan(p: Plan): string {
   return YAML.stringify({
     contract_hash: p.contractHash,
-    tasks: p.tasks.map((t) => ({ id: t.id, title: t.title, covers: t.covers, needs: t.needs, brief: t.brief })),
+    tasks: p.tasks.map((t) => ({
+      id: t.id,
+      title: t.title,
+      covers: t.covers,
+      needs: t.needs,
+      ...(t.model ? { model: t.model } : {}),
+      brief: t.brief,
+    })),
   });
 }
 

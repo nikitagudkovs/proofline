@@ -5,6 +5,12 @@ import type { RunState } from './types.js';
 
 export const runsDir = (root: string) => path.join(root, DIR, 'runs');
 export const runDir = (root: string, id: string) => path.join(runsDir(root), id);
+export const sessionsDir = (root: string, id: string) => path.join(runDir(root, id), 'sessions');
+/** Planner sessions happen before a run exists; they are kept here. */
+export const AUTHORING = '_authoring';
+
+/** Called after every saved change; the UI server uses it to push updates to the browser. */
+export const stateListeners = new Set<(root: string, state: RunState) => void>();
 
 /** Written after every state change, so a killed run can be resumed where it stopped. */
 export function saveState(root: string, state: RunState): void {
@@ -13,6 +19,7 @@ export function saveState(root: string, state: RunState): void {
   const file = path.join(dir, 'state.json');
   writeFileSync(`${file}.tmp`, JSON.stringify(state, null, 2));
   renameSync(`${file}.tmp`, file);
+  for (const listener of stateListeners) listener(root, state);
 }
 
 export function loadState(root: string, id: string): RunState {

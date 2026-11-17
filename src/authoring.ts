@@ -44,6 +44,7 @@ export async function draftContract(ctx: Ctx, goal: string): Promise<Contract> {
     prompt: contractPrompt(goal),
     schema: CONTRACT_SCHEMA,
     write: false,
+    signal: ctx.signal,
   });
   addPlannerUsage(ctx.root, res, true);
   const draft: Contract = {
@@ -74,10 +75,12 @@ export async function draftPlan(ctx: Ctx): Promise<Plan> {
       prompt: planPrompt(contract, problems),
       schema: PLAN_SCHEMA,
       write: false,
+      signal: ctx.signal,
     });
     addPlannerUsage(ctx.root, res);
     const plan: Plan = {
       contractHash: hash,
+      // Models are a person's choice, made in the plan afterwards; the planner does not pick them.
       tasks: res.output.tasks.map((t) => ({
         id: String(t.id).trim(),
         title: String(t.title).trim(),

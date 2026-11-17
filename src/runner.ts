@@ -8,9 +8,10 @@ import type { AgentResult, Engine, Role } from './engine.js';
 import { loadPlan, validatePlan, waves } from './plan.js';
 import { BUILD_SCHEMA, buildPrompt, fixPrompt, type BuildOutput } from './prompts.js';
 import { writeReport } from './report.js';
-import { newRunId, saveState } from './state.js';
+import { recordSessions, type SessionListener } from './sessions.js';
+import { newRunId, saveState, sessionsDir } from './state.js';
 import type { Contract, Plan, RunState, Task, TaskState, Usage } from './types.js';
-import { createLock, git, gitTry, mapLimit } from './util.js';
+import { AbortError, createLock, git, gitTry, isAbort, mapLimit } from './util.js';
 import { runBaseline, verifyRun } from './verify.js';
 
 export interface Ctx {
@@ -19,6 +20,13 @@ export interface Ctx {
   engine: Engine;
   log: (msg: string) => void;
   track: (state: RunState, role: Role, res: AgentResult<unknown>) => void;
+  /** Aborting stops the run: agents are killed and the run is left resumable. */
+  signal?: AbortSignal;
+}
+
+/** The same context, with every agent run of this run recorded under its folder. */
+export function withSessions(ctx: Ctx, runId: string, listener?: SessionListener): Ctx {
+  return { ...ctx, engine: recordSessions(ctx.engine, sessionsDir(ctx.root, runId), listener) };
 }
 
 export function makeCtx(root: string, cfg: Config, engine: Engine, log: (msg: string) => void = () => {}): Ctx {
@@ -97,6 +105,20 @@ function newTaskState(id: string, title: string, covers: string[]): TaskState {
 
 /** Build, verify, send failures back, verify again. Safe to call again on an interrupted run. */
 export async function executeRun(ctx: Ctx, state: RunState): Promise<RunState> {
+  try {
+    return await execute(ctx, state);
+  } catch (e) {
+    if (!isAbort(e)) throw e;
+    for (const t of Object.values(state.tasks)) if (t.status === 'building') t.status = 'pending';
+    state.progress = undefined;
+    state.status = 'stopped';
+    saveState(ctx.root, state);
+    ctx.log(`run ${state.id} stopped; "run --resume" continues it`);
+    return state;
+  }
+}
+
+async function execute(ctx: Ctx, state: RunState): Promise<RunState> {
   const { contract, hash } = loadApprovedContract(ctx.root);
   if (hash !== state.contractHash) {
     throw new Error(`The contract changed since run ${state.id} started. Start a new run for the new contract.`);
@@ -107,6 +129,7 @@ export async function executeRun(ctx: Ctx, state: RunState): Promise<RunState> {
 
   if (!state.baseline) await runBaseline(ctx, state, contract);
   state.status = 'building';
+  state.finishedAt = undefined;
   await buildAll(ctx, state, contract, plan);
 
   let round = await verifyRun(ctx, state, contract);
@@ -120,7 +143,7 @@ export async function executeRun(ctx: Ctx, state: RunState): Promise<RunState> {
 
     const name = `FIX${fixRound}`;
     const fix = (state.tasks[name] = newTaskState(name, `Fix ${failures.map((f) => f.criterion).join(', ')}`, failures.map((f) => f.criterion)));
-    await attemptBuild(ctx, state, fix, fixPrompt(contract, failures));
+    await attemptBuild(ctx, state, fix, fixPrompt(contract, failures), ctx.cfg.models.builder);
     if (fix.status !== 'built' || fix.commits.length === 0) {
       fix.status = 'failed';
       fix.error ??= 'the fix changed nothing';
@@ -162,7 +185,7 @@ async function buildAll(ctx: Ctx, state: RunState, contract: Contract, plan: Pla
     saveState(ctx.root, state);
 
     const prompt = (t: Task) => buildPrompt(contract, t, notesFor(state, t));
-    await mapLimit(runnable, ctx.cfg.concurrency, (t) => attemptBuild(ctx, state, state.tasks[t.id], prompt(t)));
+    await mapLimit(runnable, ctx.cfg.concurrency, (t) => attemptBuild(ctx, state, state.tasks[t.id], prompt(t), t.model));
 
     // Merge one at a time, in plan order, so the history reads the same on every run.
     for (const t of runnable) {
@@ -171,7 +194,7 @@ async function buildAll(ctx: Ctx, state: RunState, contract: Contract, plan: Pla
       if (await merge(ctx, state, ts)) continue;
       // Two tasks of one wave touched the same lines. Rebuild the later one on top of what is merged now.
       ctx.log(`${t.id} conflicts with work merged in the same wave: rebuilding it on the merged result`);
-      await attemptBuild(ctx, state, ts, prompt(t));
+      await attemptBuild(ctx, state, ts, prompt(t), t.model);
       if (ts.status === 'built') await mergeOrFail(ctx, state, ts);
     }
   }
@@ -185,10 +208,11 @@ function notesFor(state: RunState, task: Task): string[] {
 }
 
 /** Run one builder in a fresh worktree off the integration branch. Sets the task to built or failed. */
-async function attemptBuild(ctx: Ctx, state: RunState, ts: TaskState, prompt: string): Promise<void> {
+async function attemptBuild(ctx: Ctx, state: RunState, ts: TaskState, prompt: string, model?: string): Promise<void> {
   const wt = taskDir(state, ts.id);
   const branch = taskBranch(state, ts.id);
   for (let i = 0; i < 2; i++) {
+    if (ctx.signal?.aborted) throw new AbortError();
     ts.attempts += 1;
     ts.status = 'building';
     ts.error = undefined;
@@ -207,6 +231,8 @@ async function attemptBuild(ctx: Ctx, state: RunState, ts: TaskState, prompt: st
         prompt,
         schema: BUILD_SCHEMA,
         write: true,
+        model,
+        signal: ctx.signal,
       });
       ctx.track(state, 'builder', res);
 
@@ -232,6 +258,11 @@ async function attemptBuild(ctx: Ctx, state: RunState, ts: TaskState, prompt: st
       ctx.log(`${ts.id} ${ts.status === 'built' ? `built (${ts.commits.length} commit${ts.commits.length === 1 ? '' : 's'})` : `failed: ${ts.error}`}`);
       return;
     } catch (e) {
+      if (isAbort(e) || ctx.signal?.aborted) {
+        ts.status = 'pending';
+        saveState(ctx.root, state);
+        throw new AbortError();
+      }
       ts.status = 'failed';
       ts.error = (e as Error).message;
       saveState(ctx.root, state);
