@@ -280,6 +280,15 @@ repos:
     setup: ln -sfn "$PROOFLINE_SOURCE/node_modules" node_modules
 ```
 
+By default a run starts from the branch your checkout is on. On a machine where that checkout is shared, or often behind, set `base` and every run starts from that branch as the remote has it, fetched first; the pull request goes into it and the checkout is not used at all:
+
+```yaml
+base: main            # one repository
+repos:                # or per repository of a workspace
+  - path: api
+    base: develop
+```
+
 A single task can use a different model from the other builders: set `model:` on it in `.proofline/plan.yaml`, or pick it on the Plan screen.
 
 ## Design decisions

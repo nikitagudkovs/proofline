@@ -9,6 +9,8 @@ export interface RepoConfig {
   path: string;
   /** Run in every copy of this repository before agents or proofs use it. */
   setup: string;
+  /** Start every run from this branch as it is on the remote, whatever the checkout is on. */
+  base?: string;
 }
 
 /** A repository as a run sees it. A single-repository run has one, with an empty name. */
@@ -17,6 +19,8 @@ export interface Repo {
   /** The checkout the person works in. A run never changes it. */
   root: string;
   setup: string;
+  /** Set when runs start from `origin/<base>`, fetched first, and not from the checkout's own branch. */
+  base?: string;
 }
 
 /** A step in a run's life that a finishing action can wait for or follow. */
@@ -71,6 +75,8 @@ export interface Config {
   models: { planner: string; builder: string; verifier: string; reviewer: string };
   /** Extra instructions for the reviewer of a whole change: a team's own checklist. */
   reviewInstructions: string;
+  /** Start every run from this branch as it is on the remote (fetched first), not from the checkout. Empty = the checkout's branch. */
+  base: string;
   builder: { permissionMode: string; allowedTools: string[] };
   /** Extra arguments for every `claude` process, e.g. ["--setting-sources", "project"]. */
   claudeArgs: string[];
@@ -88,6 +94,7 @@ export const DEFAULTS: Config = {
   auth: 'subscription',
   models: { planner: '', builder: '', verifier: '', reviewer: '' },
   reviewInstructions: '',
+  base: '',
   builder: {
     permissionMode: 'acceptEdits',
     allowedTools: ['Bash', 'Edit', 'Write', 'Read', 'Glob', 'Grep'],
@@ -107,7 +114,7 @@ function readRaw(root: string): Record<string, any> {
 function parseRepos(raw: unknown): RepoConfig[] {
   if (!Array.isArray(raw)) return [];
   return raw
-    .map((r) => (typeof r === 'string' ? { path: r, setup: '' } : { path: String(r?.path ?? ''), setup: String(r?.setup ?? '') }))
+    .map((r) => (typeof r === 'string' ? { path: r, setup: '' } : { path: String(r?.path ?? ''), setup: String(r?.setup ?? ''), ...(r?.base ? { base: String(r.base).trim() } : {}) }))
     .map((r) => ({ ...r, path: r.path.trim().replace(/^\.\//, '').replace(/\/+$/, '') }))
     .filter((r) => r.path);
 }
@@ -137,6 +144,7 @@ export function loadConfig(root: string): Config {
     actions: parseActions(raw.actions),
     mergeMethod: ['squash', 'rebase'].includes(raw.mergeMethod) ? raw.mergeMethod : 'merge',
     reviewInstructions: typeof raw.reviewInstructions === 'string' ? raw.reviewInstructions.trim() : '',
+    base: typeof raw.base === 'string' ? raw.base.trim() : '',
     models: { ...DEFAULTS.models, ...raw.models },
     builder: { ...DEFAULTS.builder, ...raw.builder },
     timeouts: { ...DEFAULTS.timeouts, ...raw.timeouts },
@@ -145,8 +153,8 @@ export function loadConfig(root: string): Config {
 
 /** The repositories a run works on: the workspace's list, or this folder itself. */
 export function repoList(root: string, cfg: Config): Repo[] {
-  if (cfg.repos.length === 0) return [{ name: '', root, setup: cfg.setup }];
-  return cfg.repos.map((r) => ({ name: r.path, root: path.join(root, r.path), setup: r.setup }));
+  if (cfg.repos.length === 0) return [{ name: '', root, setup: cfg.setup, ...(cfg.base ? { base: cfg.base } : {}) }];
+  return cfg.repos.map((r) => ({ name: r.path, root: path.join(root, r.path), setup: r.setup, ...(r.base ? { base: r.base } : {}) }));
 }
 
 /** The nearest folder at or above `start` whose settings list several repositories. */
@@ -166,6 +174,7 @@ export function workspaceTemplate(repos: string[]): string {
   return `${head}${tail}
 # The repositories delivered together: folders inside this workspace, each with its own git history.
 # "setup" runs in every copy of that repository before agents and proofs use it.
+# "base: develop" on a repository starts every run from origin/develop, whatever its checkout is on.
 # PROOFLINE_SOURCE is your own checkout of it: ln -sfn "$PROOFLINE_SOURCE/node_modules" node_modules
 repos:
 ${repos.map((r) => `  - path: ${r}\n    setup: ""`).join('\n')}

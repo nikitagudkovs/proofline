@@ -96,6 +96,13 @@ async function startingPoint(repo: Repo, workspace: boolean): Promise<RepoRun> {
   if (workspace && realpathSync(top.stdout.trim()) !== realpathSync(repo.root)) {
     throw new Error(`${repo.name} is a folder inside another repository, not a repository of its own.`);
   }
+  if (repo.base) {
+    // A checkout that others share, or that is behind, is a poor place to start: take the branch as the remote has it.
+    const where = workspace ? `${repo.name}: ` : '';
+    const fetched = await gitTry(repo.root, 'fetch', 'origin', repo.base);
+    if (fetched.code !== 0) throw new Error(`${where}could not fetch ${repo.base} from origin: ${fetched.stderr.trim().split('\n').pop()}`);
+    return { name: repo.name, baseBranch: repo.base, baseSha: await git(repo.root, 'rev-parse', `origin/${repo.base}`) };
+  }
   const baseBranch = await git(repo.root, 'rev-parse', '--abbrev-ref', 'HEAD');
   if (baseBranch === 'HEAD') throw new Error(`${workspace ? `${repo.name} is` : 'You are'} on a detached HEAD. Check out a branch first.`);
   return { name: repo.name, baseBranch, baseSha: await git(repo.root, 'rev-parse', 'HEAD') };

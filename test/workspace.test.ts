@@ -4,7 +4,9 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { hashContract, lintContract, loadContract } from '../src/contract.js';
 import { loadPlan, planProblems } from '../src/plan.js';
-import { cleanRun, createRun, executeRun } from '../src/runner.js';
+import { loadConfig } from '../src/config.js';
+import { doctor } from '../src/doctor.js';
+import { cleanRun, createRun, executeRun, makeCtx } from '../src/runner.js';
 import { startServer } from '../src/server.js';
 import { shipRun } from '../src/ship.js';
 import { runDir } from '../src/state.js';
@@ -217,5 +219,52 @@ test('the control room shows the workspace and keeps each task in its repository
     assert.match((await call('GET', `/api/runs/${id}/sessions/T2-1`)).changes, /^web\/\n[0-9a-f]+ T2: hello screen\n\n client\.txt/);
   } finally {
     await server.close();
+  }
+});
+
+test('with a base set, a run starts from the remote branch, not from a checkout that is elsewhere or behind', async () => {
+  const ws = await workspace(CONTRACT, PLAN);
+  const gh = await fakeGitHub(ws.root);
+  try {
+    // The shared branch moves on the remote while the checkout sits on someone's side branch, one commit behind.
+    const api = path.join(ws.root, 'api');
+    await git(api, 'push', '-q', 'origin', 'develop');
+    await git(api, 'checkout', '-q', '-b', 'side-work');
+    writeFileSync(path.join(api, 'NEWS.md'), 'landed on the remote\n');
+    await git(api, 'add', '-A');
+    await git(api, 'commit', '-q', '-m', 'news');
+    await git(api, 'push', '-q', 'origin', 'side-work:develop');
+    await git(api, 'reset', '-q', '--hard', 'HEAD~1');
+
+    const file = path.join(ws.root, '.proofline', 'config.yaml');
+    writeFileSync(file, readFileSync(file, 'utf8').replace('repos: [api, web]', 'repos: [{ path: api, base: develop }, web]'));
+    const cfg = loadConfig(ws.root);
+    assert.match((await doctor(ws.root, cfg)).find((c) => c.label === 'starts from (api)')!.detail, /develop as it is on the remote.*Your checkout \(on side-work\) is not used/);
+
+    const engine = new ScriptedEngine({
+      // The builder sees what landed on the remote, although the checkout never had it.
+      T1: (req) => {
+        assert.ok(existsSync(path.join(req.cwd, 'NEWS.md')));
+        return writes({ 'routes.txt': 'GET /hello\n' })(req, 1);
+      },
+      T2: writes({ 'client.txt': 'fetch /hello\n' }),
+      C3: () => ({ verdict: 'pass', evidence: 'web/client.txt:1 calls the route in api/routes.txt:1' }),
+    });
+    const ctx = makeCtx(ws.root, cfg, engine);
+    const state = await executeRun(ctx, await createRun(ctx));
+    assert.equal(state.status, 'proven');
+
+    const [apiRun, webRun] = state.repos!;
+    assert.equal(apiRun.baseBranch, 'develop');
+    assert.equal(apiRun.baseSha, await git(gh.remote('api'), 'rev-parse', 'develop'));
+    assert.equal(webRun.baseBranch, 'main'); // no base set: the checkout's own branch, as before
+
+    // The pull request goes into the shared branch, and the checkout was left exactly where it was.
+    await shipRun(ctx, state, false);
+    assert.match(gh.calls(), /^api pr create --base develop /m);
+    assert.equal(await git(api, 'rev-parse', '--abbrev-ref', 'HEAD'), 'side-work');
+    assert.ok(!existsSync(path.join(api, 'NEWS.md')));
+  } finally {
+    gh.restore();
   }
 });

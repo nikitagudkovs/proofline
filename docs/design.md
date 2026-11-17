@@ -99,6 +99,8 @@ A feature that needs an endpoint and the screen that calls it is one piece of wo
 
 A single repository is the same code with one unnamed repository and no reference copies.
 
+A run normally starts from the commit each checkout is on. Where that is the wrong place to start (a checkout several sessions share, or one that lags), a repository can name a `base` branch: the run fetches it and starts from the remote's copy, and the checkout's own branch and working tree play no part.
+
 ## Setup commands and what they leave behind
 
 Agents and proofs work in fresh worktrees, which have no dependencies and no untracked key files. The `setup` command runs in every such copy with `PROOFLINE_SOURCE` pointing at the person's own checkout, so it can link or copy them. Whatever it leaves untracked is recorded and kept out of the task's commit: a linked `node_modules` slips past a `node_modules/` ignore rule, and it must not end up in a pull request.

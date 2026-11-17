@@ -122,7 +122,9 @@ export async function purgeRun(ctx: Ctx, state: RunState): Promise<string[]> {
     const untouched = head === run?.baseSha;
     const merged = state.repos ? run?.merged : state.merged;
     const onRemote = (await gitTry(repo.root, 'rev-parse', '--verify', '-q', `origin/${state.branch}`)).stdout.trim() === head;
-    const inBase = (await gitTry(repo.root, 'merge-base', '--is-ancestor', head, run?.baseBranch ?? 'HEAD')).code === 0;
+    const inBase =
+      (await gitTry(repo.root, 'merge-base', '--is-ancestor', head, run?.baseBranch ?? 'HEAD')).code === 0 ||
+      (!!run && (await gitTry(repo.root, 'merge-base', '--is-ancestor', head, `origin/${run.baseBranch}`)).code === 0);
     if (untouched || merged || onRemote || inBase) await gitTry(repo.root, 'branch', '-D', state.branch);
     else kept.push(`${repo.name ? `${repo.name}: ` : ''}${state.branch}`);
   }
