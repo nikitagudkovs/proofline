@@ -80,7 +80,9 @@ export async function fixture(contractYaml: string, planTasksYaml: string): Prom
   const hash = approveContract(root);
   writeFileSync(path.join(root, DIR, 'plan.yaml'), `contract_hash: ${hash}\n${planTasksYaml}`);
 
+  // Worktrees go next to the throwaway repository, also for code that reads the settings file itself.
   const cfg: Config = { ...DEFAULTS, worktreeDir: path.join(base, 'worktrees') };
+  writeFileSync(path.join(root, DIR, 'config.yaml'), `worktreeDir: ${cfg.worktreeDir}\n`);
   const logs: string[] = [];
   return { root, cfg, logs, ctx: (engine) => makeCtx(root, cfg, engine, (m) => logs.push(m)) };
 }
