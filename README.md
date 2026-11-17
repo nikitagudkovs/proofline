@@ -6,6 +6,8 @@ Coding agents are good at building and bad at knowing when they are finished. As
 
 proofline turns the job around. Before anything is built you agree a short contract: numbered requirements, each with the proof that will show it holds. Agents then build in parallel, and a result counts only when its proof passes. The builder's own report is never used as evidence.
 
+It works on one repository, or on several that ship together: [an API and the app that calls it](#a-frontend-and-a-backend-in-one-delivery) are planned as one delivery and checked together once both sides are in.
+
 Here is a real run. Two agents worked in parallel: one wrote a `truncate` function, the other documented it. Both reported "done". The documentation described a result the code does not produce, and only the independent check noticed:
 
 ```
@@ -51,17 +53,17 @@ One minute, start to finish. The contract, plan and full report of this run are 
 proofline ui
 ```
 
-opens a local page for the repository you are in. Everything the command line does is there, plus what a terminal cannot show: agents working at the same moment.
+opens a local page for the repository, or the workspace of several, that you are in. Everything the command line does is there, plus what a terminal cannot show: agents working at the same moment.
 
 ![The run screen: tasks being built on the left, the contract being checked on the right](docs/ui-run.png)
 
 | Screen | What you see and control |
 |---|---|
 | **Contract** | Type a goal and let the planner draft the contract, or write it yourself. Edit any requirement or proof, then approve. An edit after approval visibly voids it. |
-| **Plan** | The building blocks: tasks grouped into waves that run in parallel, a coverage strip that turns red for a requirement nobody is responsible for, and a model picker on every task. |
+| **Plan** | The building blocks: tasks grouped into waves that run in parallel, a coverage strip that turns red for a requirement nobody is responsible for, and a model picker on every task. In a workspace, each task also shows the repository it changes. |
 | **Run** | Start, stop and resume. Each task shows its status and the step its agent is on right now; each requirement shows whether its proof failed before the work, its verdict per round, and the evidence. |
 | **Sessions** | Every agent run, live and past. Open one for its report: the brief it was given, each step it took, what it answered, what it committed, its model, time and cost. |
-| **Models** | Which model plans, builds and verifies; how many agents run at once; how often a failed line is sent back; and which accounts the run uses. |
+| **Models** | Which model plans, builds and verifies; how many agents run at once; how often a failed line is sent back; the command that prepares each copy of a repository; and which accounts and starting branch the run uses. |
 
 ![One agent session: facts, its own report, the changes it committed, and each step](docs/ui-session.png)
 
@@ -93,6 +95,8 @@ flowchart LR
 6. **Send back.** Failed criteria return to a builder together with the verifier's evidence, and then *every* criterion is verified again, so a fix cannot quietly break a neighbour. After a set number of rounds the run stops and says plainly what is not proven.
 7. **Report.** One page that links each requirement to the tasks that built it, the commits that changed it and the evidence that proves it. `proofline ship` pushes the branch and opens a pull request with that page as its description.
 
+The same seven steps run across several repositories at once; what changes is described under [A frontend and a backend in one delivery](#a-frontend-and-a-backend-in-one-delivery).
+
 ## Install
 
 Requires Node 20+, git, and [Claude Code](https://claude.com/claude-code) signed in. The GitHub CLI (`gh`) is needed only for `ship`.
@@ -102,7 +106,7 @@ git clone https://github.com/nikitagudkovs/proofline && cd proofline
 npm install && npm link
 ```
 
-Then, in the repository you want to work on:
+Then, in the repository you want to work on (or the folder that holds several, [set up as a workspace](#a-frontend-and-a-backend-in-one-delivery)):
 
 ```sh
 proofline ui        # the control room, in your browser
@@ -181,6 +185,8 @@ A builder never writes into another repository: what it reads there is a separat
 
 ![A run across an API and a web client: one task per repository, eight requirements checked with both merged](docs/ui-workspace.png)
 
+The contract, plan and report of that run are in [examples/shop-greeting](examples/shop-greeting).
+
 ### The contract
 
 ```yaml
@@ -239,6 +245,8 @@ A single task can use a different model from the other builders: set `model:` on
 **A proof has to be able to fail.** Each command proof is run before the work as well as after. Red before and green after is evidence; green both times is only a guard, and the report says which is which.
 
 **Agents cannot renegotiate the contract.** A builder that finds a proof which could never pass is told not to bend the product around it. It raises a concern, the report shows it, and the person who owns the contract decides.
+
+**A seam is checked from above, after both sides exist.** A frontend and a backend that each pass their own tests can still disagree about a field name. In a workspace the proofs run only once every repository has all of its work merged, in one place where a command or a reviewer can look at both.
 
 **The plan is validated, not trusted.** Coverage in both directions (no criterion without a task, no task without a criterion), no dependency cycles, and a plan is bound to the hash of the contract it was made for.
 

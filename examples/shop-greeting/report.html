@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proofline report 20261117-202538</title>
+<style>
+  :root { --bg:#fbfaf7; --fg:#1c1b19; --muted:#6f6b63; --line:#e4e0d6; --card:#fff; --pass:#17694a; --pass-bg:#e3f3ea; --fail:#a3271f; --fail-bg:#fbe6e3; --none:#6f6b63; --none-bg:#eeebe3; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#151412; --fg:#ece9e1; --muted:#9a958a; --line:#2e2c27; --card:#1d1c19; --pass:#6fd3a5; --pass-bg:#16332a; --fail:#f09088; --fail-bg:#3b1b18; --none:#9a958a; --none-bg:#2a2823; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:32px 16px 64px; background:var(--bg); color:var(--fg); font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
+  main { max-width:1100px; margin:0 auto; }
+  h1 { font-size:14px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin:0 0 8px; }
+  .headline { font-size:34px; font-weight:700; letter-spacing:-.02em; margin:0 0 6px; color:var(--pass); }
+  .goal { font-size:18px; margin:0 0 14px; max-width:70ch; }
+  .meta { color:var(--muted); font-size:13px; margin:0 0 28px; }
+  h2 { font-size:13px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin:36px 0 10px; }
+  .scroll { overflow-x:auto; border:1px solid var(--line); border-radius:10px; background:var(--card); }
+  table { border-collapse:collapse; width:100%; min-width:720px; }
+  th, td { text-align:left; vertical-align:top; padding:12px 14px; border-bottom:1px solid var(--line); }
+  th { font-size:12px; font-weight:600; color:var(--muted); }
+  tr:last-child td { border-bottom:0; }
+  code, pre { font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+  pre { margin:0; white-space:pre-wrap; word-break:break-word; color:var(--muted); }
+  table.matrix { table-layout:fixed; min-width:900px; }
+  table.matrix th:nth-child(1) { width:84px; } table.matrix th:nth-child(3) { width:120px; }
+  table.matrix th:nth-child(4) { width:84px; } table.matrix th:nth-child(5) { width:96px; }
+  table.matrix th:nth-child(6) { width:30%; }
+  .proof code { word-break:break-word; }
+  .cid { font-weight:700; font-size:12px; color:var(--muted); }
+  .proof { margin-top:6px; font-size:13px; color:var(--muted); }
+  .muted { color:var(--muted); }
+  .pill { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; }
+  .pill.pass { color:var(--pass); background:var(--pass-bg); }
+  .pill.fail { color:var(--fail); background:var(--fail-bg); }
+  .pill.none { color:var(--none); background:var(--none-bg); }
+  a { color:inherit; }
+  .tag { display:inline-block; padding:1px 7px; border:1px solid var(--line); border-radius:6px; font-size:12px; font-weight:600; }
+  ul { margin:0; padding:0 0 0 2px; list-style:none; } li { margin:6px 0; }
+  .caught li { border:1px solid var(--line); border-radius:10px; background:var(--card); padding:12px 14px; }
+  .caught pre { margin-top:8px; }
+  footer { margin-top:28px; color:var(--muted); font-size:13px; max-width:80ch; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Proofline report</h1>
+  <p class="headline">Proven: 8 of 8 criteria</p>
+  <p class="goal">Add a greeting feature: the API serves GET /greeting returning { message: 'Hello, &lt;name&gt;!' } for the query name, or a 400 with an error when the name is missing. The web client gets greetingRequest(base, name) and readGreeting(body) for it. Both repositories get tests.</p>
+  <p class="meta">run 20261117-202538 · branch <code>proofline/20261117-202538</code> in api off <code>main@a5d19df</code>, web off <code>main@6262c38</code> · 39s · <span class="round">round 1: 8/8</span></p>
+
+  <h2>Contract → result</h2>
+  <div class="scroll"><table class="matrix">
+    <thead><tr><th></th><th>Criterion and its proof</th><th>Before the work</th><th>Built by</th><th>Commits</th><th>Evidence</th></tr></thead>
+    <tbody>
+<tr class="pass">
+  <td class="verdict"><span class="pill pass">pass</span></td>
+  <td><div class="cid">C1</div>In api, handle('GET','/greeting',{name:'Ada'}) returns { status: 200, body: { message: 'Hello, Ada!' } }.<div class="proof"><code>cd api &amp;&amp; node -e &quot;import('./src/routes.js').then(m=&gt;{const r=m.handle('GET','/greeting',{name:'Ada'});require('node:assert/strict').deepEqual(r,{status:200,body:{message:'Hello, Ada!'}})}).catch(e=&gt;{console.error(e);process.exit(1)})&quot;</code></div></td>
+  <td class="muted">failed, as expected</td>
+  <td><span class="tag">T1</span></td>
+  <td><code>7c8fd31</code></td>
+  <td><pre>exit 0 in 0.0s</pre></td>
+</tr>
+<tr class="pass">
+  <td class="verdict"><span class="pill pass">pass</span></td>
+  <td><div class="cid">C2</div>In api, handle('GET','/greeting',{}) and handle('GET','/greeting',{name:''}) both return status 400 with a body containing a non-empty string 'error' field and no 'message' field.<div class="proof"><code>cd api &amp;&amp; node -e &quot;import('./src/routes.js').then(m=&gt;{const a=require('node:assert/strict');for(const q of [{},{name:''}]){const r=m.handle('GET','/greeting',q);a.equal(r.status,400);a.equal(typeof r.body.error,'string');a.ok(r.body.error.length&gt;0);a.ok(!('message' in r.body))}}).catch(e=&gt;{console.error(e);process.exit(1)})&quot;</code></div></td>
+  <td class="muted">failed, as expected</td>
+  <td><span class="tag">T1</span></td>
+  <td><code>7c8fd31</code></td>
+  <td><pre>exit 0 in 0.0s</pre></td>
+</tr>
+<tr class="pass">
+  <td class="verdict"><span class="pill pass">pass</span></td>
+  <td><div class="cid">C3</div>The new file api/test/greeting.test.js exists, covers both the success case and the missing-name 400 case, and passes.<div class="proof"><code>cd api &amp;&amp; node --test test/greeting.test.js</code></div></td>
+  <td class="muted">failed, as expected</td>
+  <td><span class="tag">T1</span></td>
+  <td><code>7c8fd31</code></td>
+  <td><pre>exit 0 in 0.3s
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 187.220451</pre></td>
+</tr>
+<tr class="pass">
+  <td class="verdict"><span class="pill pass">pass</span></td>
+  <td><div class="cid">C4</div>In web, greetingRequest('http://x','Ada') returns { method: 'GET', url: 'http://x/greeting?name=Ada' }, and a name with special characters is URL-encoded (greetingRequest('http://x','A b&amp;c').url is 'http://x/greeting?name=A%20b%26c').<div class="proof"><code>cd web &amp;&amp; node -e &quot;import('./src/client.js').then(m=&gt;{const a=require('node:assert/strict');a.deepEqual(m.greetingRequest('http://x','Ada'),{method:'GET',url:'http://x/greeting?name=Ada'});a.equal(m.greetingRequest('http://x','A b&amp;c').url,'http://x/greeting?name=A%20b%26c')}).catch(e=&gt;{console.error(e);process.exit(1)})&quot;</code></div></td>
+  <td class="muted">failed, as expected</td>
+  <td><span class="tag">T2</span></td>
+  <td><code>6631e1e</code></td>
+  <td><pre>exit 0 in 0.0s</pre></td>
+</tr>
+<tr class="pass">
+  <td class="verdict"><span class="pill pass">pass</span></td>
+  <td><div class="cid">C5</div>In web, readGreeting({ message: 'Hello, Ada!' }) returns the string 'Hello, Ada!'.<div class="proof"><code>cd web &amp;&amp; node -e &quot;import('./src/client.js').then(m=&gt;{require('node:assert/strict').equal(m.readGreeting({message:'Hello, Ada!'}),'Hello, Ada!')}).catch(e=&gt;{console.error(e);process.exit(1)})&quot;</code></div></td>
+  <td class="muted">failed, as expected</td>
+  <td><span class="tag">T2</span></td>
+  <td><code>6631e1e</code></td>
+  <td><pre>exit 0 in 0.0s</pre></td>
+</tr>
+<tr class="pass">
+  <td class="verdict"><span class="pill pass">pass</span></td>
+  <td><div class="cid">C6</div>The new file web/test/greeting.test.js exists, covers greetingRequest and readGreeting, and passes.<div class="proof"><code>cd web &amp;&amp; node --test test/greeting.test.js</code></div></td>
+  <td class="muted">failed, as expected</td>
+  <td><span class="tag">T2</span></td>
+  <td><code>6631e1e</code></td>
+  <td><pre>exit 0 in 0.2s
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 103.790268</pre></td>
+</tr>
+<tr class="pass">
+  <td class="verdict"><span class="pill pass">pass</span></td>
+  <td><div class="cid">C7</div>The existing health tests still pass in both repositories.<div class="proof"><code>cd api &amp;&amp; node --test test/health.test.js &amp;&amp; cd ../web &amp;&amp; node --test test/health.test.js</code></div></td>
+  <td class="muted">already passed (guard)</td>
+  <td><span class="tag">T1</span></td>
+  <td><code>7c8fd31</code></td>
+  <td><pre>exit 0 in 0.3s
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 103.820388</pre></td>
+</tr>
+<tr class="pass">
+  <td class="verdict"><span class="pill pass">pass</span></td>
+  <td><div class="cid">C8</div>Seam: the request greetingRequest builds (method GET, path /greeting, query parameter named exactly 'name') is the request the API route accepts (method GET, path /greeting, reads query.name), and the field readGreeting reads ('message') is the field the API returns on success ('message'). Check each name and the method/path field by field across both repositories.<div class="proof"><span class="muted">review:</span> Read web/src/client.js and api/src/routes.js. Does greetingRequest use method 'GET', path '/greeting' and query parameter 'name', matching the API route's method, path and query.name; and does readGreeting return body.message, the field the API puts in its 200 body?</div></td>
+  <td class="muted">n/a</td>
+  <td><span class="tag">T2</span></td>
+  <td><code>6631e1e</code></td>
+  <td><pre>web/src/client.js:11 builds `{ method: 'GET', url: `${base}/greeting?name=${encodeURIComponent(name)}` }`, matching the API route's method GET and path '/greeting' at api/src/routes.js:5-6, with the query parameter named exactly `name`. The API's handler reads it via destructuring `({ name })` at api/src/routes.js:7, which is the same as reading query.name. web/src/client.js:15 `readGreeting` returns `body.message`, and api/src/routes.js:9 returns `{ status: 200, body: { message: ... } }` on success, so the field names match.</pre></td>
+</tr>
+    </tbody>
+  </table></div>
+
+  <h2>Tasks</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Task</th><th>Status</th><th>Attempts</th><th>Commits</th><th>Builder's summary (not proof)</th></tr></thead>
+    <tbody>
+<tr><td><span class="tag">T1</span> <span class="muted">api</span> API greeting route and tests</td><td>merged</td><td>1</td><td>1</td><td>Added a GET /greeting entry to the `routes` table in api/src/routes.js. A non-empty string `query.name` returns 200 with `{message:'Hello, &lt;name&gt;!'}`. A missing or empty name returns 400 with `{error:'name is required'}`. Added api/test/greeting.test.js, which covers the success case and the 400 case for `{}` and `{name:''}`. Both api tests pass and the C1 proof passes. I didn't run C2 or the web half of C7, and C7 depends on web's health test passing.</td></tr>
+<tr><td><span class="tag">T2</span> <span class="muted">web</span> Web greeting client helpers and tests <span class="muted">after T1</span></td><td>merged</td><td>1</td><td>1</td><td>Added greetingRequest(base, name) and readGreeting(body) to web/src/client.js, leaving the health helpers unchanged. Added web/test/greeting.test.js with three tests: a plain name, a special-character name, and readGreeting. The greeting and health tests pass, the C4 proof passes, and the work is committed.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Agent usage</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Role</th><th>Runs</th><th>Turns</th><th>Agent time</th><th>List-price equivalent</th></tr></thead>
+    <tbody>
+<tr><td>planner</td><td>2</td><td>14</td><td>29s</td><td>$0.10</td></tr>
+<tr><td>builder</td><td>2</td><td>11</td><td>27s</td><td>$0.18</td></tr>
+<tr><td>verifier</td><td>1</td><td>4</td><td>5s</td><td>$0.00</td></tr>
+    </tbody>
+  </table></div>
+
+  <footer>Command proofs were run by the harness itself. Review proofs came from a read-only agent that saw the criterion and the code, never the builders' output.</footer>
+</main>
+</body>
+</html>

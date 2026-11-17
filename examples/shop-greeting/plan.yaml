@@ -1,0 +1,23 @@
+contract_hash: b538cb7e9a996b78
+tasks:
+- id: T1
+  title: API greeting route and tests
+  repo: api
+  covers:
+  - C1
+  - C2
+  - C3
+  - C7
+  needs: []
+  brief: 'In api/src/routes.js add to the `routes` table a `{ method: ''GET'', path: ''/greeting'', handler }` entry. The handler receives `query`; if `query.name` is a non-empty string return `{ status: 200, body: { message: `Hello, ${query.name}!` } }`, otherwise (missing or empty) return `{ status: 400, body: { error: ''name is required'' } }` with no `message` field. Do not touch the /health route; no new deps or server. Add api/test/greeting.test.js using node:test and node:assert/strict (match style of api/test/health.test.js) covering success (name ''Ada'' -> 200 and ''Hello, Ada!'') and the 400 case for both {} and {name:''''}. Verify with `cd api && node --test test/greeting.test.js && node --test test/health.test.js`.'
+- id: T2
+  title: Web greeting client helpers and tests
+  repo: web
+  covers:
+  - C4
+  - C5
+  - C6
+  - C8
+  needs:
+  - T1
+  brief: 'In web/src/client.js add exported `greetingRequest(base, name)` returning `{ method: ''GET'', url: `${base}/greeting?name=${encodeURIComponent(name)}` }` (e.g. ''A b&c'' -> ''A%20b%26c'') and `readGreeting(body)` returning `body.message`. The API (sibling repo) serves GET /greeting reading query param `name` and returns 200 `{ message }`. Leave healthRequest/readHealth unchanged. Add web/test/greeting.test.js using node:test and node:assert/strict (match style of web/test/health.test.js) covering greetingRequest (plain and special-character names) and readGreeting. Verify with `cd web && node --test test/greeting.test.js && node --test test/health.test.js`. Also confirm the seam (C8) by reading the merged api/src/routes.js: method GET, path /greeting, query.name, and success field ''message'' match.'

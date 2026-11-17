@@ -1,6 +1,6 @@
 {
   "name": "proofline",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Contract-first orchestrator for coding agents: every requirement gets a proof, and nothing is done until the proof passes.",
   "license": "MIT",
   "type": "module",

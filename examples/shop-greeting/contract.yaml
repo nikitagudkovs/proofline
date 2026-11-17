@@ -1,0 +1,41 @@
+goal: 'Add a greeting feature: the API serves GET /greeting returning { message: ''Hello, <name>!'' } for the query name, or a 400 with an error when the name is missing. The web client gets greetingRequest(base, name) and readGreeting(body) for it. Both repositories get tests.'
+out_of_scope:
+- Any HTTP server, framework or new dependency; routes stay in the existing handle()/routes table
+- Changes to the /health route, healthRequest or readHealth
+- Handling the 400 error body in the web client (readGreeting only reads the success message)
+- Name validation beyond missing/empty, trimming, length limits or escaping in the message
+- README, package.json script or CI changes
+- Running the API and web client against each other over a network
+criteria:
+- id: C1
+  text: 'In api, handle(''GET'',''/greeting'',{name:''Ada''}) returns { status: 200, body: { message: ''Hello, Ada!'' } }.'
+  proof:
+    command: cd api && node -e "import('./src/routes.js').then(m=>{const r=m.handle('GET','/greeting',{name:'Ada'});require('node:assert/strict').deepEqual(r,{status:200,body:{message:'Hello, Ada!'}})}).catch(e=>{console.error(e);process.exit(1)})"
+- id: C2
+  text: In api, handle('GET','/greeting',{}) and handle('GET','/greeting',{name:''}) both return status 400 with a body containing a non-empty string 'error' field and no 'message' field.
+  proof:
+    command: cd api && node -e "import('./src/routes.js').then(m=>{const a=require('node:assert/strict');for(const q of [{},{name:''}]){const r=m.handle('GET','/greeting',q);a.equal(r.status,400);a.equal(typeof r.body.error,'string');a.ok(r.body.error.length>0);a.ok(!('message' in r.body))}}).catch(e=>{console.error(e);process.exit(1)})"
+- id: C3
+  text: The new file api/test/greeting.test.js exists, covers both the success case and the missing-name 400 case, and passes.
+  proof:
+    command: cd api && node --test test/greeting.test.js
+- id: C4
+  text: 'In web, greetingRequest(''http://x'',''Ada'') returns { method: ''GET'', url: ''http://x/greeting?name=Ada'' }, and a name with special characters is URL-encoded (greetingRequest(''http://x'',''A b&c'').url is ''http://x/greeting?name=A%20b%26c'').'
+  proof:
+    command: cd web && node -e "import('./src/client.js').then(m=>{const a=require('node:assert/strict');a.deepEqual(m.greetingRequest('http://x','Ada'),{method:'GET',url:'http://x/greeting?name=Ada'});a.equal(m.greetingRequest('http://x','A b&c').url,'http://x/greeting?name=A%20b%26c')}).catch(e=>{console.error(e);process.exit(1)})"
+- id: C5
+  text: 'In web, readGreeting({ message: ''Hello, Ada!'' }) returns the string ''Hello, Ada!''.'
+  proof:
+    command: cd web && node -e "import('./src/client.js').then(m=>{require('node:assert/strict').equal(m.readGreeting({message:'Hello, Ada!'}),'Hello, Ada!')}).catch(e=>{console.error(e);process.exit(1)})"
+- id: C6
+  text: The new file web/test/greeting.test.js exists, covers greetingRequest and readGreeting, and passes.
+  proof:
+    command: cd web && node --test test/greeting.test.js
+- id: C7
+  text: The existing health tests still pass in both repositories.
+  proof:
+    command: cd api && node --test test/health.test.js && cd ../web && node --test test/health.test.js
+- id: C8
+  text: 'Seam: the request greetingRequest builds (method GET, path /greeting, query parameter named exactly ''name'') is the request the API route accepts (method GET, path /greeting, reads query.name), and the field readGreeting reads (''message'') is the field the API returns on success (''message''). Check each name and the method/path field by field across both repositories.'
+  proof:
+    review: Read web/src/client.js and api/src/routes.js. Does greetingRequest use method 'GET', path '/greeting' and query parameter 'name', matching the API route's method, path and query.name; and does readGreeting return body.message, the field the API puts in its 200 body?
