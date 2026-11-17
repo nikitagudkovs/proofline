@@ -1,4 +1,5 @@
 import { loadApprovedContract } from './contract.js';
+import { runAuto } from './finish.js';
 import { loadPlan } from './plan.js';
 import { writeReport } from './report.js';
 import type { Ctx } from './runner.js';
@@ -21,6 +22,7 @@ export async function shipRun(ctx: Ctx, state: RunState, draft: boolean): Promis
   const title = contract.goal.split(/(?<=[.!?])\s/)[0].slice(0, 72);
 
   const opened: { root: string; url: string }[] = [];
+  let fresh = false;
   for (const run of repoRuns(state)) {
     const repo = ctx.repos.find((r) => r.name === run.name);
     if (!repo) throw new Error(`${run.name} is no longer in this workspace's settings.`);
@@ -44,6 +46,7 @@ export async function shipRun(ctx: Ctx, state: RunState, draft: boolean): Promis
     state.prUrl ??= url;
     saveState(ctx.root, state);
     opened.push({ root: repo.root, url });
+    fresh = true;
   }
   if (opened.length === 0) throw new Error(`Run ${state.id} changed nothing, so there is nothing to ship.`);
 
@@ -57,5 +60,6 @@ export async function shipRun(ctx: Ctx, state: RunState, draft: boolean): Promis
     }
     writeReport(ctx.root, state, contract, plan);
   }
+  if (fresh) await runAuto(ctx, state, 'shipped');
   return opened.map((o) => o.url).join('\n');
 }

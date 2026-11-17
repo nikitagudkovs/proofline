@@ -25,7 +25,7 @@ export interface RunSummary {
 export interface Overview {
   /** `repos` lists the repositories of a workspace; it is empty when this folder is the one repository. */
   repo: { name: string; root: string; repos?: string[] };
-  job: { kind: 'contract' | 'plan' | 'run' | 'verify' | 'ship'; runId: string; startedAt: string } | null;
+  job: { kind: 'contract' | 'plan' | 'run' | 'verify' | 'ship' | 'merge' | 'action' | 'clean'; runId: string; startedAt: string } | null;
   lastError: string;
   config: Config;
   accounts: Check[];
@@ -40,6 +40,8 @@ export interface RunView {
   sessions: SessionMeta[];
   log: LogLine[];
   current: boolean;
+  /** How far the run has come: which finishing steps are on offer. Absent in recordings made before these existed. */
+  stage?: { proven: boolean; shipped: boolean; merged: boolean };
 }
 
 export interface SessionView {

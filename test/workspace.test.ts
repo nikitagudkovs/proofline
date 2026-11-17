@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { hashContract, lintContract, loadContract } from '../src/contract.js';
@@ -9,7 +9,7 @@ import { startServer } from '../src/server.js';
 import { shipRun } from '../src/ship.js';
 import { runDir } from '../src/state.js';
 import { git, gitTry } from '../src/util.js';
-import { ScriptedEngine, done, fixture, workspace, writes } from './helpers.js';
+import { ScriptedEngine, done, fakeGitHub, fixture, workspace, writes } from './helpers.js';
 
 const CONTRACT = `
 goal: A hello endpoint and a screen that calls it
@@ -114,19 +114,7 @@ test('in a workspace every task must name one of its repositories', async () => 
 
 test('a workspace run opens one pull request per repository, each into the branch it started from', async () => {
   const ws = await workspace(CONTRACT, PLAN);
-  const base = path.dirname(ws.root);
-  for (const repo of ['api', 'web']) {
-    await git(base, 'init', '-q', '--bare', `${repo}.git`);
-    await git(path.join(ws.root, repo), 'remote', 'add', 'origin', path.join(base, `${repo}.git`));
-  }
-  // A stand-in for the GitHub CLI that records how it was called.
-  const bin = path.join(base, 'bin');
-  const calls = path.join(base, 'gh-calls.txt');
-  mkdirSync(bin);
-  writeFileSync(path.join(bin, 'gh'), `#!/bin/sh\necho "$(basename "$PWD") $*" >> "${calls}"\n[ "$2" = create ] && echo "https://example.test/$(basename "$PWD")/pull/1"\nexit 0\n`);
-  chmodSync(path.join(bin, 'gh'), 0o755);
-  const oldPath = process.env.PATH;
-  process.env.PATH = `${bin}:${oldPath}`;
+  const gh = await fakeGitHub(ws.root);
   try {
     const ctx = ws.ctx(
       new ScriptedEngine({
@@ -142,20 +130,20 @@ test('a workspace run opens one pull request per repository, each into the branc
 
     assert.equal(urls, 'https://example.test/api/pull/1\nhttps://example.test/web/pull/1');
     assert.deepEqual(state.repos?.map((r) => r.prUrl), urls.split('\n'));
-    const log = read(calls);
+    const log = gh.calls();
     assert.match(log, new RegExp(`^api pr create --base develop --head ${state.branch} `, 'm'));
     assert.match(log, new RegExp(`^web pr create --base main --head ${state.branch} `, 'm'));
     // Each pull request is told about the other half.
     assert.match(log, /^api pr comment https:\/\/example\.test\/api\/pull\/1 --body .*spans 2 repositories/m);
     assert.match(log, /example\.test\/web\/pull\/1$/m);
-    assert.equal(await git(path.join(base, 'api.git'), 'show', `${state.branch}:routes.txt`), 'GET /hello');
+    assert.equal(await git(gh.remote('api'), 'show', `${state.branch}:routes.txt`), 'GET /hello');
     assert.match(read(runDir(ws.root, state.id), 'report.md'), /Pull request for web: https:\/\/example\.test\/web\/pull\/1/);
 
     // Shipping again opens nothing new.
     assert.equal(await shipRun(ctx, state, false), urls);
     assert.equal(log.split('\n').filter((l) => / pr create /.test(l)).length, 2);
   } finally {
-    process.env.PATH = oldPath;
+    gh.restore();
   }
 });
 

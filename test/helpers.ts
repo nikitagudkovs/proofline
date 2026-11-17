@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DEFAULTS, loadConfig, type Config } from '../src/config.js';
@@ -115,4 +115,33 @@ export async function workspace(contractYaml: string, planTasksYaml: string, set
   const cfg = loadConfig(root);
   const logs: string[] = [];
   return { root, cfg, logs, ctx: (engine) => makeCtx(root, cfg, engine, (m) => logs.push(m)) };
+}
+
+/**
+ * Give each repository of a workspace fixture a remote, and put a stand-in for the GitHub CLI
+ * on the PATH that records how it was called and answers like a repository that merges at once.
+ */
+export async function fakeGitHub(root: string): Promise<{ calls: () => string; remote: (repo: string) => string; restore: () => void }> {
+  const base = path.dirname(root);
+  for (const repo of ['api', 'web']) {
+    await git(base, 'init', '-q', '--bare', `${repo}.git`);
+    await git(path.join(root, repo), 'remote', 'add', 'origin', path.join(base, `${repo}.git`));
+  }
+  const bin = path.join(base, 'bin');
+  const log = path.join(base, 'gh-calls.txt');
+  mkdirSync(bin);
+  writeFileSync(log, '');
+  writeFileSync(
+    path.join(bin, 'gh'),
+    `#!/bin/sh
+echo "$(basename "$PWD") $*" >> "${log}"
+[ "$2" = create ] && echo "https://example.test/$(basename "$PWD")/pull/1"
+[ "$2" = view ] && echo MERGED
+exit 0
+`,
+  );
+  chmodSync(path.join(bin, 'gh'), 0o755);
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${bin}:${oldPath}`;
+  return { calls: () => readFileSync(log, 'utf8'), remote: (repo) => path.join(base, `${repo}.git`), restore: () => void (process.env.PATH = oldPath) };
 }

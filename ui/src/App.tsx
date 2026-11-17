@@ -39,7 +39,7 @@ export interface Shell {
   act: (fn: () => Promise<unknown>) => Promise<boolean>;
 }
 
-const JOB_LABEL = { contract: 'Drafting the contract', plan: 'Planning tasks', run: 'Run in progress', verify: 'Verifying', ship: 'Opening the pull request' };
+const JOB_LABEL = { contract: 'Drafting the contract', plan: 'Planning tasks', run: 'Run in progress', verify: 'Verifying', ship: 'Opening the pull request', merge: 'Merging', action: 'Running an action', clean: 'Cleaning up' };
 
 export function App() {
   const [view, setView] = useState<ViewId>(readHash);

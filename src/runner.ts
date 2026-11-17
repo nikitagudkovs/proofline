@@ -4,6 +4,7 @@ import path from 'node:path';
 import { repoList, type Config, type Repo } from './config.js';
 import { readPlannerUsage } from './authoring.js';
 import { loadApprovedContract } from './contract.js';
+import { runAuto } from './finish.js';
 import type { AgentResult, Engine, Role } from './engine.js';
 import { loadPlan, validatePlan, waves } from './plan.js';
 import { BUILD_SCHEMA, buildPrompt, fixPrompt, type BuildOutput } from './prompts.js';
@@ -144,7 +145,9 @@ function newTaskState(id: string, title: string, covers: string[], repo?: string
 /** Build, verify, send failures back, verify again. Safe to call again on an interrupted run. */
 export async function executeRun(ctx: Ctx, state: RunState): Promise<RunState> {
   try {
-    return await execute(ctx, state);
+    await execute(ctx, state);
+    if (state.status === 'proven') await runAuto(ctx, state, 'proven');
+    return state;
   } catch (e) {
     if (!isAbort(e)) throw e;
     for (const t of Object.values(state.tasks)) if (t.status === 'building') t.status = 'pending';

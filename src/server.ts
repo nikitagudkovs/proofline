@@ -19,6 +19,7 @@ import {
   serializeContract,
 } from './contract.js';
 import { doctor, type Check } from './doctor.js';
+import { mergeRun, purgeRun, reached, runAction } from './finish.js';
 import { ClaudeCodeEngine, type Engine } from './engine.js';
 import { loadPlan, planPath, planProblems, savePlan, waves } from './plan.js';
 import { writeReport } from './report.js';
@@ -40,7 +41,7 @@ export interface ServerOptions {
 }
 
 interface Job {
-  kind: 'contract' | 'plan' | 'run' | 'verify' | 'ship';
+  kind: 'contract' | 'plan' | 'run' | 'verify' | 'ship' | 'merge' | 'action' | 'clean';
   runId: string;
   startedAt: string;
   abort: AbortController;
@@ -141,6 +142,7 @@ function runSummary(root: string, id: string) {
     total: last?.results.length ?? 0,
     prUrl: s.prUrl,
     prUrls: repoRuns(s).flatMap((r) => (r.prUrl ? [{ repo: r.name, url: r.prUrl }] : [])),
+    cleaned: !!s.cleaned,
   };
 }
 
@@ -224,6 +226,8 @@ export async function startServer(root: string, opts: ServerOptions) {
       log: readLog(root, id),
       /** False when the contract on disk is no longer the one this run was made for. */
       current: c.hash === state.contractHash,
+      /** How far the run has come: which finishing steps are on offer. */
+      stage: { proven: reached(state, 'proven'), shipped: reached(state, 'shipped'), merged: reached(state, 'merged') },
     };
   };
 
@@ -393,12 +397,43 @@ export async function startServer(root: string, opts: ServerOptions) {
     ],
     [
       'POST',
+      /^\/api\/runs\/([\w-]+)\/merge$/,
+      (m) => {
+        const state = loadState(root, m[1]);
+        start('merge', state.id, async (ctx) => {
+          await mergeRun(ctx, state);
+        });
+        return { id: state.id };
+      },
+    ],
+    [
+      'POST',
+      /^\/api\/runs\/([\w-]+)\/actions$/,
+      (m, body) => {
+        const state = loadState(root, m[1]);
+        // Only an action that is in the settings file can run: the browser names one, it never supplies a command.
+        const action = loadConfig(root).actions.find((a) => a.name === body.name);
+        if (!action) throw new HttpError(404, `There is no action called "${body.name}" in the settings.`);
+        if (!reached(state, action.needs)) throw new HttpError(409, `"${action.name}" is for a run that is ${action.needs}.`);
+        start('action', state.id, async (ctx) => {
+          if (!(await runAction(ctx, state, action))) throw new Error(`"${action.name}" failed. Its output is in the activity log.`);
+        });
+        return { id: state.id };
+      },
+    ],
+    [
+      'POST',
       /^\/api\/runs\/([\w-]+)\/clean$/,
-      async (m) => {
-        if (job?.runId === m[1]) throw new HttpError(409, 'This run is still working. Stop it first.');
+      async (m, body) => {
+        if (job) throw new HttpError(409, `A ${job.kind} job is running. Stop it or wait for it to finish.`);
         const cfg = loadConfig(root);
-        await cleanRun(makeCtx(root, cfg, engineFor(cfg)), loadState(root, m[1]));
-        return { ok: true };
+        const state = loadState(root, m[1]);
+        const ctx = makeCtx(root, cfg, engineFor(cfg), logger(state.id));
+        if (!body.all) {
+          await cleanRun(ctx, state);
+          return { ok: true, kept: [] };
+        }
+        return { ok: true, kept: await purgeRun(ctx, state) };
       },
     ],
     [

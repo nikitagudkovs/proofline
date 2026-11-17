@@ -23,6 +23,8 @@ src/
   engine.ts     the agent runtime behind one method; Claude Code implementation
   sessions.ts   a record of every agent run: brief, steps, answer
   server.ts     the control room's local HTTP API and live event stream
+  ship.ts       push and open pull requests
+  finish.ts     merge, the team's own finishing actions, clean-up
   doctor.ts     which accounts a run will use
   cli.ts        commands
 ui/             the control room itself (React), built into dist/ui
@@ -101,6 +103,14 @@ A single repository is the same code with one unnamed repository and no referenc
 
 Agents and proofs work in fresh worktrees, which have no dependencies and no untracked key files. The `setup` command runs in every such copy with `PROOFLINE_SOURCE` pointing at the person's own checkout, so it can link or copy them. Whatever it leaves untracked is recorded and kept out of the task's commit: a linked `node_modules` slips past a `node_modules/` ignore rule, and it must not end up in a pull request.
 
+## Finishing: where proofline stops and the team's own process starts
+
+Opening and merging pull requests is the same everywhere, so those are built in, with one rule: only a proven run merges. Everything after that (deploying, updating a tracker) differs per team and often touches production. proofline does not model it. It runs a named command from the settings file, with the run's facts in the environment, and records the exit code and the last lines of output with the run.
+
+Two limits are deliberate. Actions can be pressed from the control room but are defined only in the file, so a request from a browser can never carry a command. And nothing with consequences outside the repository happens by default: an action runs by itself only where the settings say `auto`.
+
+Cleaning up removes what can be rebuilt (working copies, session records, evidence logs) and what is safely elsewhere (branches that are merged or pushed). A branch that exists nowhere else is kept.
+
 ## State and resume
 
 `.proofline/runs/<id>/state.json` is rewritten (write to temp file, rename) after every transition: a task starting, finishing, merging, a verification round completing. `proofline run --resume` reloads it, recreates the integration worktree if it is gone, skips merged tasks and continues. A task that was mid-build is rebuilt from the integration branch; nothing half-finished is reused.
@@ -150,7 +160,7 @@ The test suite implements the same interface with scripted agents that write rea
 
 - **Agents talking to each other.** Tasks communicate through the merged code and a short notes field. Chat between agents is hard to audit and easy to derail.
 - **A hosted service or a database.** The control room is a local process over plain files. State is JSON, the report is a static HTML page, and both can be read without proofline running.
-- **Automatic conflict resolution, automatic contract edits, automatic merging to the main branch.** Each of these would let an agent change what "done" means.
+- **Automatic conflict resolution, automatic contract edits, automatic merging.** Each of these would let an agent change what "done" means. Merging is a button a person presses, and only for a proven run.
 
 ## Where it could go
 

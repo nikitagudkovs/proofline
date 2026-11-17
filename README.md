@@ -61,7 +61,7 @@ opens a local page for the repository, or the workspace of several, that you are
 |---|---|
 | **Contract** | Type a goal and let the planner draft the contract, or write it yourself. Edit any requirement or proof, then approve. An edit after approval visibly voids it. |
 | **Plan** | The building blocks: tasks grouped into waves that run in parallel, a coverage strip that turns red for a requirement nobody is responsible for, and a model picker on every task. In a workspace, each task also shows the repository it changes. |
-| **Run** | Start, stop and resume. Each task shows its status and the step its agent is on right now; each requirement shows whether its proof failed before the work, its verdict per round, and the evidence. |
+| **Run** | Start, stop and resume, then finish: open the pull requests, merge them, run your own last steps, clean up. Each task shows its status and the step its agent is on right now; each requirement shows whether its proof failed before the work, its verdict per round, and the evidence. |
 | **Sessions** | Every agent run, live and past. Open one for its report: the brief it was given, each step it took, what it answered, what it committed, its model, time and cost. |
 | **Models** | Which model plans, builds and verifies; how many agents run at once; how often a failed line is sent back; the command that prepares each copy of a repository; and which accounts and starting branch the run uses. |
 
@@ -160,7 +160,9 @@ proofline go "Let users export their invoices as CSV from the billing page"
 | `verify` | Runs the proofs again on an existing run |
 | `status` | Lists runs, tasks and the last verdict per criterion |
 | `ship` | Pushes the branch and opens a pull request; `--draft` allows an unproven run |
-| `clean` | Removes a run's worktrees; the branch and the records stay |
+| `merge` | Merges the run's pull requests into the branches they target; proven runs only |
+| `action "<name>"` | Runs a finishing action from the settings |
+| `clean` | Removes a run's worktrees; the branch and the records stay. `--all` also removes session records and local branches |
 
 `run` exits 0 when the contract is proven and 2 when it is not, so it can gate a pipeline.
 
@@ -186,6 +188,29 @@ A builder never writes into another repository: what it reads there is a separat
 ![A run across an API and a web client: one task per repository, eight requirements checked with both merged](docs/ui-workspace.png)
 
 The contract, plan and report of that run are in [examples/shop-greeting](examples/shop-greeting).
+
+### Finishing a run
+
+A proven run is a branch and a report. What happens next is usually the same few steps every time, so they are buttons on the run screen (and commands):
+
+- **Open the pull request** (`ship`): one per repository, into the branch that repository was on.
+- **Merge** (`merge`): merges those pull requests where they point. Only a proven run merges.
+- **Your own last mile** (`action "<name>"`): commands from your settings, offered as buttons once the run is far enough along. Deploying, updating a tracker, posting to a channel: proofline does not know how your team does these, so it runs what you tell it to and records whether it worked.
+- **Clean up** (`clean --all`): removes the working copies, the session records and the run's local branches. The report stays. A branch that is neither merged nor pushed is the only copy of its work, so it is kept and named.
+
+```yaml
+mergeMethod: merge          # or squash, rebase
+actions:
+  - name: Update the tracker
+    run: ./scripts/note-delivery.sh "$PROOFLINE_REPORT"
+    auto: merged            # also runs by itself right after a merge
+  - name: Deploy to staging
+    run: ./scripts/deploy.sh staging
+    needs: merged           # the button appears only then (default: proven)
+    confirm: Deploy this to staging now?
+```
+
+An action runs from the folder proofline was started in, with `PROOFLINE_RUN`, `PROOFLINE_STATUS`, `PROOFLINE_BRANCH`, `PROOFLINE_ROOT`, `PROOFLINE_REPORT` and `PROOFLINE_STATE` (the run's record as JSON), plus `PROOFLINE_REPOS`, `PROOFLINE_BASES` and `PROOFLINE_PRS`, one line per repository. Actions live in the settings file only: the control room can press them, never edit them or supply a command of its own.
 
 ### The contract
 

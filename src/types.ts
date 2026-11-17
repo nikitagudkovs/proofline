@@ -96,6 +96,17 @@ export interface RepoRun {
   baseBranch: string;
   baseSha: string;
   prUrl?: string;
+  /** The pull request was merged into baseBranch from here. */
+  merged?: boolean;
+}
+
+/** One time a finishing action from the settings was run for a run. */
+export interface ActionResult {
+  name: string;
+  at: string;
+  ok: boolean;
+  /** The last lines the command printed. */
+  output: string;
 }
 
 export type RunStatus = 'building' | 'verifying' | 'proven' | 'unproven' | 'stopped';
@@ -124,4 +135,10 @@ export interface RunState {
   progress?: ProofResult[];
   usage: Record<'planner' | 'builder' | 'verifier', Usage>;
   prUrl?: string;
+  /** Single repository: the pull request was merged from here. A workspace keeps this per repository. */
+  merged?: boolean;
+  /** Finishing actions that were run, newest last. */
+  actions?: ActionResult[];
+  /** Working copies and session records were removed; the report and this record stay. */
+  cleaned?: boolean;
 }

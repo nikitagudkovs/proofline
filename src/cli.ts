@@ -7,6 +7,7 @@ import { draftContract, draftPlan } from './authoring.js';
 import { CONFIG_TEMPLATE, configPath, findWorkspace, loadConfig, workspaceTemplate } from './config.js';
 import { DIR, approveContract, contractPath, lintContract, loadApprovedContract, loadContract, renderContract } from './contract.js';
 import { doctor } from './doctor.js';
+import { mergeRun, purgeRun, runAction } from './finish.js';
 import { ClaudeCodeEngine } from './engine.js';
 import { loadPlan, planPath, renderPlan, validatePlan } from './plan.js';
 import { writeReport } from './report.js';
@@ -34,7 +35,10 @@ const HELP = `proofline: a contract-first orchestrator for coding agents
   proofline verify              run the proofs again on an existing run
   proofline report              print the path of the report
   proofline ship                push the branch and open a pull request with the report
+  proofline merge               merge the run's pull requests into the branches they target
+  proofline action "<name>"     run a finishing action from the settings (deploy, update a tracker, ...)
   proofline clean               remove a run's worktrees (branch and records stay)
+  proofline clean --all         also remove session records and the run's local branches
   proofline go "<goal>"         contract → approve → plan → run in one go
 
 Options
@@ -43,6 +47,7 @@ Options
   --concurrency N   run: builders at the same time
   --yes             go: approve the drafted contract without asking
   --draft           ship: open a draft pull request, allowed even when not proven
+  --all             clean: session records and local branches too; the report stays
   --repos a,b       init: the repositories of a workspace, as folders below this one
   --port N          ui: port to listen on (default 4717)
   --no-open         ui: do not open the browser
@@ -57,6 +62,7 @@ const { values: flags, positionals } = parseArgs({
     yes: { type: 'boolean', default: false },
     draft: { type: 'boolean', default: false },
     repos: { type: 'string' },
+    all: { type: 'boolean', default: false },
     port: { type: 'string' },
     host: { type: 'string' },
     'no-open': { type: 'boolean', default: false },
@@ -274,8 +280,31 @@ const commands: Record<string, (ctx: Ctx) => Promise<number>> = {
     return 0;
   },
 
+  async merge(ctx) {
+    const state = pickRun(ctx.root);
+    for (const url of await mergeRun(recorded(ctx, state.id), state)) console.log(url);
+    return 0;
+  },
+
+  async action(ctx) {
+    const name = positionals.slice(1).join(' ').trim();
+    const action = ctx.cfg.actions.find((a) => a.name === name);
+    if (!action) {
+      const known = ctx.cfg.actions.map((a) => `  ${a.name}`).join('\n');
+      throw new Error(known ? `No action called "${name}". The settings have:\n${known}` : `No actions are set up. Add them under "actions:" in ${DIR}/config.yaml.`);
+    }
+    const state = pickRun(ctx.root);
+    return (await runAction(recorded(ctx, state.id), state, action)) ? 0 : 1;
+  },
+
   async clean(ctx) {
     const state = pickRun(ctx.root);
+    if (flags.all) {
+      const kept = await purgeRun(ctx, state);
+      console.log(`Cleaned up run ${state.id}: working copies, session records and local branches removed. The report is kept.`);
+      for (const k of kept) console.log(`Kept ${k}: that work is not merged and not on the remote.`);
+      return 0;
+    }
     await cleanRun(ctx, state);
     console.log(`Removed the worktrees of run ${state.id}. Branch ${state.branch} and the report are kept.`);
     return 0;

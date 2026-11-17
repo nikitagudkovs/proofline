@@ -45,6 +45,9 @@ export const api = {
   stopJob: () => call('POST', '/api/job/stop', {}),
   verify: (id: string) => call('POST', `/api/runs/${id}/verify`, {}),
   ship: (id: string, draft: boolean) => call('POST', `/api/runs/${id}/ship`, { draft }),
+  merge: (id: string) => call('POST', `/api/runs/${id}/merge`, {}),
+  action: (id: string, name: string) => call('POST', `/api/runs/${id}/actions`, { name }),
+  cleanUp: (id: string) => call<{ kept: string[] }>('POST', `/api/runs/${id}/clean`, { all: true }),
   refreshAccounts: () => call('POST', '/api/accounts/refresh', {}),
   reportUrl: (id: string) => `/api/runs/${id}/report.html?token=${boot.token ?? ''}`,
 };

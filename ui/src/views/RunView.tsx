@@ -40,6 +40,14 @@ export function RunScreen({ shell, runId }: { shell: Shell; runId?: string }) {
   const end = state.finishedAt ? Date.parse(state.finishedAt) : shell.busy ? now() : Date.parse(run.log[run.log.length - 1]?.t ?? state.startedAt);
   const elapsed = Math.max(0, end - Date.parse(state.startedAt));
 
+  // What is left to do with a finished run: merge it, run the team's own last steps, tidy up.
+  const stage = run.stage ?? { proven: state.status === 'proven', shipped: !!state.prUrl, merged: false };
+  const reachedStage = { proven: stage.proven, shipped: stage.shipped, merged: stage.merged };
+  const bases = [...new Set((state.repos ?? [{ baseBranch: state.baseBranch }]).map((r) => r.baseBranch))].join(' and ');
+  const actions = (ov.config.actions ?? []).filter((a) => reachedStage[a.needs]);
+  const ranOk = (name: string) => [...(state.actions ?? [])].reverse().find((a) => a.name === name)?.ok;
+  const idle = !shell.busy && !readOnly;
+
   const planned = run.current ? (ov.plan.plan?.tasks ?? []) : [];
   const known = new Set(planned.map((t) => t.id));
   const waves: Task[][] = planned.length ? toWaves(planned.filter((t) => state.tasks[t.id])) : [];
@@ -74,12 +82,12 @@ export function RunScreen({ shell, runId }: { shell: Shell; runId?: string }) {
                 Stop the run
               </button>
             )}
-            {!shell.busy && run.current && (state.status === 'stopped' || state.status === 'unproven' || state.status === 'building') && (
+            {!shell.busy && run.current && !state.cleaned && (state.status === 'stopped' || state.status === 'unproven' || state.status === 'building') && (
               <button className="btn btn-primary" onClick={() => act(() => api.startRun(state.id))}>
                 {state.status === 'unproven' ? 'Try again' : 'Resume'}
               </button>
             )}
-            {!shell.busy && run.current && state.rounds.length > 0 && (
+            {!shell.busy && run.current && !state.cleaned && state.rounds.length > 0 && (
               <button className="btn" onClick={() => act(() => api.verify(state.id))}>
                 Check the proofs again
               </button>
@@ -98,6 +106,7 @@ export function RunScreen({ shell, runId }: { shell: Shell; runId?: string }) {
             ) : (
               !shell.busy &&
               run.current &&
+              !state.cleaned &&
               state.rounds.length > 0 && (
                 <button className={`btn${state.status === 'proven' ? ' btn-primary' : ''}`} onClick={() => act(() => api.ship(state.id, state.status !== 'proven'))}>
                   {state.status === 'proven' ? `Open ${state.repos ? 'the pull requests' : 'a pull request'}` : `Open ${state.repos ? 'draft pull requests' : 'a draft pull request'}`}
@@ -112,6 +121,35 @@ export function RunScreen({ shell, runId }: { shell: Shell; runId?: string }) {
           </div>
         )}
       </div>
+
+      {(stage.shipped || actions.length > 0 || (idle && state.rounds.length > 0)) && !readOnly && (
+        <div className="finish">
+          <span className="label">Finish</span>
+          {stage.shipped && stage.proven && !stage.merged && (
+            <button className="btn btn-primary" disabled={!idle} onClick={() => confirm(`Merge ${state.repos ? 'the pull requests' : 'the pull request'} into ${bases}?`) && act(() => api.merge(state.id))}>
+              Merge into {bases}
+            </button>
+          )}
+          {stage.merged && <Pill status="merged">merged into {bases}</Pill>}
+          {actions.map((a) => (
+            <button key={a.name} className="btn" disabled={!idle} title={a.run} onClick={() => (!a.confirm || confirm(a.confirm)) && act(() => api.action(state.id, a.name))}>
+              {ranOk(a.name) === true ? '✓ ' : ranOk(a.name) === false ? '✗ ' : ''}
+              {a.name}
+            </button>
+          ))}
+          {state.cleaned ? (
+            <span className="muted">Cleaned up: the working copies and session records are gone, the report stays.</span>
+          ) : (
+            <button
+              className="btn"
+              disabled={!idle}
+              onClick={() => confirm("Remove this run's working copies, session records and local branches? The report stays. Work that is not merged and not pushed is kept.") && act(() => api.cleanUp(state.id))}
+            >
+              Clean up
+            </button>
+          )}
+        </div>
+      )}
 
       {!run.current && <div className="notice notice-warn">The contract has changed since this run. It is shown as a record; start a new run for the new contract.</div>}
 

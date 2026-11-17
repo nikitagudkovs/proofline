@@ -19,6 +19,26 @@ export interface Repo {
   setup: string;
 }
 
+/** A step in a run's life that a finishing action can wait for or follow. */
+export type Stage = 'proven' | 'shipped' | 'merged';
+
+/**
+ * A finishing action: your own command, offered as a button once a run is far enough along.
+ * This is where a team's own last mile goes (deploy, update a tracker, post to chat), so
+ * proofline itself never needs to know about it.
+ */
+export interface ActionConfig {
+  name: string;
+  /** Shell command, run from the folder proofline was started in. See README for the PROOFLINE_* variables it gets. */
+  run: string;
+  /** The button is offered once the run has reached this stage. Default: proven. */
+  needs: Stage;
+  /** Also run it without being asked, right after this stage. */
+  auto?: Stage;
+  /** A question the control room asks before running it. */
+  confirm?: string;
+}
+
 export interface Config {
   /** How many builders (and review verifiers) run at once. */
   concurrency: number;
@@ -35,6 +55,10 @@ export interface Config {
    * Empty means this folder is itself the one repository.
    */
   repos: RepoConfig[];
+  /** How "merge" merges a pull request. */
+  mergeMethod: 'merge' | 'squash' | 'rebase';
+  /** Finishing actions. Set in the file only: the control room can run them but never edit them. */
+  actions: ActionConfig[];
   /** Where task worktrees live. Outside the repository, so your own tooling never scans them. */
   worktreeDir: string;
   /**
@@ -56,6 +80,8 @@ export const DEFAULTS: Config = {
   maxFixRounds: 2,
   setup: '',
   repos: [],
+  mergeMethod: 'merge',
+  actions: [],
   worktreeDir: path.join(os.homedir(), '.proofline', 'worktrees'),
   auth: 'subscription',
   models: { planner: '', builder: '', verifier: '' },
@@ -83,12 +109,30 @@ function parseRepos(raw: unknown): RepoConfig[] {
     .filter((r) => r.path);
 }
 
+const STAGES: Stage[] = ['proven', 'shipped', 'merged'];
+const stage = (v: unknown): Stage | undefined => STAGES.find((s) => s === v);
+
+function parseActions(raw: unknown): ActionConfig[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((a) => ({
+      name: String(a?.name ?? '').trim(),
+      run: String(a?.run ?? '').trim(),
+      needs: stage(a?.needs) ?? 'proven',
+      ...(stage(a?.auto) ? { auto: stage(a.auto) } : {}),
+      ...(a?.confirm ? { confirm: String(a.confirm) } : {}),
+    }))
+    .filter((a) => a.name && a.run);
+}
+
 export function loadConfig(root: string): Config {
   const raw = readRaw(root);
   return {
     ...DEFAULTS,
     ...raw,
     repos: parseRepos(raw.repos),
+    actions: parseActions(raw.actions),
+    mergeMethod: ['squash', 'rebase'].includes(raw.mergeMethod) ? raw.mergeMethod : 'merge',
     models: { ...DEFAULTS.models, ...raw.models },
     builder: { ...DEFAULTS.builder, ...raw.builder },
     timeouts: { ...DEFAULTS.timeouts, ...raw.timeouts },

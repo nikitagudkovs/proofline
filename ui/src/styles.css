@@ -1153,3 +1153,17 @@ textarea.input {
 .step-error span {
   color: var(--fail);
 }
+
+.finish {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.finish .label {
+  margin-right: 6px;
+}
