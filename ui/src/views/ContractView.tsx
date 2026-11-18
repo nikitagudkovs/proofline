@@ -38,10 +38,28 @@ export function ContractView({ shell }: { shell: Shell }) {
     }
   };
 
+  const [shelved, setShelved] = useState<string[]>([]);
+
   // Follow the file on disk (a fresh draft from the planner, an edit in an editor) unless there are unsaved edits here.
   useEffect(() => {
-    if (!dirty) setDraft(saved ?? blank());
+    if (dirty) return;
+    setDraft(saved ?? blank());
+    setShelved([]);
   }, [ov.contract.hash, saved === undefined]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Per requirement, what was written for the kind of proof that is not showing: switching
+  // between Command and Review puts one text aside and brings the other back, never empties it.
+  const switchProof = (i: number, to: Criterion['proof']['type']) => {
+    const proof = draft.criteria[i].proof;
+    if (proof.type === to) return;
+    const back = shelved[i] ?? '';
+    setShelved(Object.assign([...shelved], { [i]: proof.type === 'command' ? proof.run : proof.check }));
+    editCriterion(i, { proof: to === 'command' ? { type: 'command', run: back } : { type: 'review', check: back } });
+  };
+  const removeCriterion = (i: number) => {
+    setShelved(Array.from({ length: draft.criteria.length }, (_, j) => shelved[j] ?? '').filter((_, j) => j !== i));
+    edit({ ...draft, criteria: draft.criteria.filter((_, j) => j !== i) });
+  };
 
   const edit = (next: Contract) => {
     setDraft(next);
@@ -144,14 +162,14 @@ export function ContractView({ shell }: { shell: Shell }) {
                         <button
                           className={k.proof.type === 'command' ? 'on' : ''}
                           disabled={readOnly}
-                          onClick={() => editCriterion(i, { proof: { type: 'command', run: k.proof.type === 'command' ? k.proof.run : '' } })}
+                          onClick={() => switchProof(i, 'command')}
                         >
                           Command
                         </button>
                         <button
                           className={k.proof.type === 'review' ? 'on' : ''}
                           disabled={readOnly}
-                          onClick={() => editCriterion(i, { proof: { type: 'review', check: k.proof.type === 'review' ? k.proof.check : '' } })}
+                          onClick={() => switchProof(i, 'review')}
                         >
                           Review
                         </button>
@@ -169,7 +187,7 @@ export function ContractView({ shell }: { shell: Shell }) {
                         }
                       />
                       {!readOnly && (
-                        <button className="btn btn-quiet" aria-label={`Remove C${i + 1}`} onClick={() => edit({ ...draft, criteria: draft.criteria.filter((_, j) => j !== i) })}>
+                        <button className="btn btn-quiet" aria-label={`Remove C${i + 1}`} onClick={() => removeCriterion(i)}>
                           Remove
                         </button>
                       )}
