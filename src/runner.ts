@@ -1,16 +1,17 @@
 import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmdirSync, rmSync, symlinkSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmdirSync, rmSync, symlinkSync } from 'node:fs';
 import path from 'node:path';
 import { gateList, repoList, type Config, type Repo } from './config.js';
 import { readPlannerUsage } from './authoring.js';
-import { loadApprovedContract } from './contract.js';
+import { contractPath, loadApprovedContract } from './contract.js';
 import { runAuto } from './finish.js';
 import type { AgentResult, Engine, Role } from './engine.js';
-import { loadPlan, validatePlan, waves } from './plan.js';
+import { loadPlan, planPath, validatePlan, waves } from './plan.js';
+import { ensureProject, touchProject } from './projects.js';
 import { BUILD_SCHEMA, buildPrompt, fixPrompt, type BuildOutput } from './prompts.js';
 import { writeReport } from './report.js';
 import { recordSessions, type SessionListener } from './sessions.js';
-import { newRunId, repoRuns, saveState, sessionsDir } from './state.js';
+import { newRunId, repoRuns, runDir, saveState, sessionsDir } from './state.js';
 import type { Contract, Plan, RepoRun, RunState, Task, TaskState, Usage } from './types.js';
 import { AbortError, createLock, git, gitTry, isAbort, mapLimit, tail } from './util.js';
 import { failedGates, roundProven, runBaseline, runSetup, verifyRun } from './verify.js';
@@ -124,6 +125,7 @@ export async function createRun(ctx: Ctx): Promise<RunState> {
   const state: RunState = {
     id,
     status: 'building',
+    project: ensureProject(ctx.root).id,
     contractHash: hash,
     baseBranch: workspace ? '' : starts[0].baseBranch,
     baseSha: workspace ? '' : starts[0].baseSha,
@@ -142,6 +144,10 @@ export async function createRun(ctx: Ctx): Promise<RunState> {
     await git(repo.root, 'worktree', 'add', '-b', state.branch, integrationRepo(state, repo), starts[i].baseSha);
   }
   saveState(ctx.root, state);
+  // The run keeps the contract and the plan it was made for, so it can still be read after they change.
+  copyFileSync(contractPath(ctx.root), path.join(runDir(ctx.root, id), 'contract.yaml'));
+  copyFileSync(planPath(ctx.root), path.join(runDir(ctx.root, id), 'plan.yaml'));
+  touchProject(ctx.root);
   return state;
 }
 

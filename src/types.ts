@@ -147,11 +147,31 @@ export interface ActionResult {
   output: string;
 }
 
+/**
+ * A goal that is being worked on, or was: it keeps its contract, its plan and its runs together,
+ * so finished work can be read again or picked up where it stopped.
+ */
+export interface Project {
+  /** When it was created, in the same form as a run id. */
+  id: string;
+  title: string;
+  /** The goal as it was typed, before the planner turned it into a contract. */
+  goal: string;
+  createdAt: string;
+  updatedAt: string;
+  /** The title was chosen by a person, so it is not replaced when the goal changes. */
+  named?: boolean;
+  /** Runs made before projects existed that belong to this one. Later runs name their project themselves. */
+  adopted?: string[];
+}
+
 export type RunStatus = 'building' | 'verifying' | 'proven' | 'unproven' | 'stopped';
 
 export interface RunState {
   id: string;
   status: RunStatus;
+  /** The project this run was made for. Absent on runs from before projects existed. */
+  project?: string;
   contractHash: string;
   baseBranch: string;
   baseSha: string;

@@ -1,9 +1,9 @@
 import type { Config, Gate } from '../../src/config';
 import type { Check } from '../../src/doctor';
 import type { SessionEvent, SessionMeta } from '../../src/sessions';
-import type { Contract, Criterion, GateResult, Plan, ProofResult, RunState, Task, TaskState } from '../../src/types';
+import type { Contract, Criterion, GateResult, Plan, Project, ProofResult, RunState, Task, TaskState } from '../../src/types';
 
-export type { Check, Config, Contract, Criterion, Gate, GateResult, Plan, ProofResult, RunState, SessionEvent, SessionMeta, Task, TaskState };
+export type { Check, Config, Contract, Criterion, Gate, GateResult, Plan, Project, ProofResult, RunState, SessionEvent, SessionMeta, Task, TaskState };
 
 export interface LogLine {
   t: string;
@@ -20,6 +20,17 @@ export interface RunSummary {
   total: number;
   prUrl?: string;
   prUrls?: { repo: string; url: string }[];
+  merged?: boolean;
+}
+
+/** A project in the browse list: what was asked, what was agreed, and every run made for it (newest first). */
+export interface ProjectSummary extends Project {
+  open: boolean;
+  contract?: Contract;
+  approved: boolean;
+  /** Tasks in its plan; 0 when it has none. */
+  tasks: number;
+  runs: RunSummary[];
 }
 
 export interface Overview {
@@ -33,7 +44,12 @@ export interface Overview {
   accounts: Check[];
   contract: { exists: boolean; contract?: Contract; hash?: string; approved: boolean; warnings: string[]; problems?: string[] };
   plan: { exists: boolean; plan?: Plan; problems: string[]; waves: string[][] };
+  /** The runs of the open project. */
   runs: RunSummary[];
+  /** The open project, every project, and the runs no project claims. Absent in recordings made before projects existed. */
+  project?: Project;
+  projects?: ProjectSummary[];
+  unfiledRuns?: RunSummary[];
   authoring: { sessions: SessionMeta[]; log: LogLine[] };
 }
 
@@ -42,6 +58,8 @@ export interface RunView {
   sessions: SessionMeta[];
   log: LogLine[];
   current: boolean;
+  /** The contract as it was when the run started. Absent on runs made before a run kept its own copy. */
+  contract?: Contract;
   /** How far the run has come: which finishing steps are on offer. Absent in recordings made before these existed. */
   stage?: { proven: boolean; shipped: boolean; merged: boolean };
 }

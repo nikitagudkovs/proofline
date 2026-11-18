@@ -14,7 +14,8 @@ import { writeReport } from './report.js';
 import { appendLog, startServer } from './server.js';
 import { shipRun } from './ship.js';
 import { cleanRun, createRun, excludeRunsDir, executeRun, makeCtx, repoNames, withSessions, type Ctx } from './runner.js';
-import { AUTHORING, latestRun, listRuns, loadState, repoRuns, runDir, saveState } from './state.js';
+import { ensureProject, latestRun, listProjects, loadProject, newProject, openProject, openProjectId, projectFiles, projectForGoal, projectRuns, touchProject } from './projects.js';
+import { AUTHORING, listRuns, loadState, repoRuns, runDir, saveState } from './state.js';
 import type { RunState } from './types.js';
 import { exec, git } from './util.js';
 import { failedGates, roundProven, verifyRun } from './verify.js';
@@ -42,6 +43,9 @@ const HELP = `proofline: a contract-first orchestrator for coding agents
   proofline clean               remove a run's worktrees (branch and records stay)
   proofline clean --all         also remove session records and the run's local branches
   proofline go "<goal>"         contract → approve → plan → run in one go
+  proofline projects            every goal worked on here, with its runs; the open one is marked
+  proofline open <id>           make another project the open one: its contract, plan and runs are back
+  proofline new ["<goal>"]      put the open project away and start an empty one
 
 Options
   --run <id>        act on this run instead of the latest
@@ -101,6 +105,13 @@ async function context(): Promise<Ctx> {
   const cfg = loadConfig(root);
   if (flags.concurrency) cfg.concurrency = Math.max(1, Number(flags.concurrency) || cfg.concurrency);
   return makeCtx(root, cfg, new ClaudeCodeEngine(cfg), log);
+}
+
+/** A goal for a project that already has a run starts a project of its own; say so, because the files move. */
+function startProject(root: string, goal: string): void {
+  const before = ensureProject(root);
+  const project = projectForGoal(root, goal);
+  if (project.id !== before.id) log(`"${before.title}" already has a run, so it is kept as it is (proofline open ${before.id}); this goal is a new project`);
 }
 
 /** A run started in a terminal keeps the same records as one started in the control room, so either can show it. */
@@ -177,6 +188,7 @@ const commands: Record<string, (ctx: Ctx) => Promise<number>> = {
   async contract(ctx) {
     const goal = positionals.slice(1).join(' ').trim();
     if (!goal) throw new Error('Say what you want built: proofline contract "<goal>"');
+    startProject(ctx.root, goal);
     log('drafting the contract (the planner reads the repository first)');
     const contract = await draftContract(withSessions(ctx, AUTHORING), goal);
     console.log(`\n${renderContract(contract)}\n`);
@@ -190,6 +202,7 @@ const commands: Record<string, (ctx: Ctx) => Promise<number>> = {
     console.log(`${renderContract(contract)}\n`);
     for (const w of lintContract(contract, repoNames(ctx))) console.log(`${paint(33, 'note')} ${w}`);
     const hash = approveContract(ctx.root);
+    touchProject(ctx.root);
     console.log(`Approved (${hash}). Editing the contract voids this approval.\nNext: proofline plan`);
     return 0;
   },
@@ -231,9 +244,40 @@ const commands: Record<string, (ctx: Ctx) => Promise<number>> = {
     return finish(ctx, state);
   },
 
+  async projects(ctx) {
+    const open = ensureProject(ctx.root).id;
+    for (const p of listProjects(ctx.root)) {
+      const files = projectFiles(ctx.root, p.id);
+      const runs = projectRuns(ctx.root, p).map((id) => loadState(ctx.root, id));
+      const last = runs[runs.length - 1];
+      const stage = last ? (last.status === 'unproven' ? 'not proven' : last.status) : files.approved ? (files.plan ? 'planned' : 'approved') : files.contract ? 'draft' : 'empty';
+      console.log(`${p.id === open ? green('●') : ' '} ${p.id}  ${stage.padEnd(10)}  ${runs.length} ${runs.length === 1 ? 'run ' : 'runs'}  ${p.title}`);
+    }
+    console.log(dim(`\n● is the open project. Open another with: proofline open <id>`));
+    return 0;
+  },
+
+  async open(ctx) {
+    const id = positionals[1];
+    if (!id) throw new Error('Say which project: proofline open <id> (list them with: proofline projects)');
+    const project = openProject(ctx.root, id);
+    console.log(`Open: ${project.title} (${project.id}). Its contract, plan and runs are the ones the commands act on now.`);
+    return 0;
+  },
+
+  async new(ctx) {
+    const before = ensureProject(ctx.root);
+    const project = newProject(ctx.root, positionals.slice(1).join(' '));
+    console.log(`"${before.title}" (${before.id}) is put away; reopen it with: proofline open ${before.id}`);
+    console.log(`New project ${project.id}. Next: proofline contract "<what you want built>"`);
+    return 0;
+  },
+
   async status(ctx) {
     if (!flags.run) {
-      const ids = listRuns(ctx.root);
+      const open = openProjectId(ctx.root);
+      const ids = open ? projectRuns(ctx.root, loadProject(ctx.root, open)) : listRuns(ctx.root);
+      if (open) console.log(`${bold('Project')} ${loadProject(ctx.root, open).title} ${dim(`(${open})`)}`);
       if (ids.length === 0) {
         console.log('No runs yet.');
         return 0;
@@ -337,6 +381,7 @@ const commands: Record<string, (ctx: Ctx) => Promise<number>> = {
   async go(ctx) {
     const goal = positionals.slice(1).join(' ').trim();
     if (!goal) throw new Error('Say what you want built: proofline go "<goal>"');
+    startProject(ctx.root, goal);
     log('drafting the contract');
     const contract = await draftContract(withSessions(ctx, AUTHORING), goal);
     console.log(`\n${renderContract(contract)}\n`);

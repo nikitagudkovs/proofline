@@ -1245,3 +1245,110 @@ textarea.input {
 .gates-head .label {
   margin-right: 6px;
 }
+
+/* Projects: the list of everything worked on, and the line that says which one is open. */
+.projectbar {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 14px;
+  font-size: 13px;
+  min-width: 0;
+}
+.projectbar strong {
+  min-width: 0;
+}
+.projects {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.project {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
+  background: var(--surface);
+}
+.project-open {
+  border-color: var(--accent);
+}
+.project-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+.project-title {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 320px;
+}
+.project-title strong {
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+.project-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  font-size: 13px;
+}
+.project-actions {
+  flex-wrap: wrap;
+}
+.project-more {
+  margin-top: 10px;
+  font-size: 13px;
+}
+.project-more > summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.project-more .label {
+  margin: 14px 0 4px;
+}
+.project-goal {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 90ch;
+}
+.project-contract {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.project-contract li {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 8px;
+}
+.project-proof {
+  display: block;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+.project-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.project-run {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}

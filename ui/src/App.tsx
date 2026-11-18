@@ -6,10 +6,12 @@ import { Pill, fmtDuration } from './ui';
 import { ContractView } from './views/ContractView';
 import { ModelsView } from './views/ModelsView';
 import { PlanView } from './views/PlanView';
+import { ProjectsView } from './views/ProjectsView';
 import { RunScreen } from './views/RunView';
 import { SessionsView } from './views/SessionsView';
 
 const VIEWS = [
+  { id: 'projects', label: 'Projects', hint: 'everything worked on' },
   { id: 'contract', label: 'Contract', hint: 'what must be true' },
   { id: 'plan', label: 'Plan', hint: 'the building blocks' },
   { id: 'run', label: 'Run', hint: 'build and verify' },
@@ -18,6 +20,7 @@ const VIEWS = [
 ] as const;
 
 type ViewId = (typeof VIEWS)[number]['id'];
+const STAGES: ViewId[] = VIEWS.map((v) => v.id).filter((id) => id !== 'projects');
 
 const readHash = (): ViewId => {
   const id = location.hash.replace('#', '');
@@ -51,12 +54,16 @@ export function App() {
   const [error, setError] = useState<{ message: string; problems: string[] }>();
   const [offline, setOffline] = useState(false);
   const picked = useRef<string>();
+  const shown = useRef<string>();
 
   const refresh = useCallback(async () => {
     try {
       const next = await api.overview();
       setOv(next);
       setOffline(false);
+      // A run picked by hand belongs to the project that was open then.
+      if (next.project?.id !== shown.current) picked.current = undefined;
+      shown.current = next.project?.id;
       // Follow the run that is working; otherwise stay on the one picked, or the latest.
       const id = (next.job?.kind === 'run' ? next.job.runId : undefined) ?? picked.current ?? next.runs[0]?.id;
       setRunId(id);
@@ -124,6 +131,7 @@ export function App() {
   };
 
   const done = {
+    projects: false,
     contract: ov.contract.approved,
     plan: ov.plan.exists && ov.plan.problems.length === 0,
     run: run?.state.status === 'proven',
@@ -145,9 +153,10 @@ export function App() {
           </span>
         </div>
         <nav className="tabs" aria-label="Stages">
-          {VIEWS.map((v, i) => (
+          {VIEWS.filter((v) => v.id !== 'projects' || ov.projects).map((v) => (
             <button key={v.id} className={`tab${view === v.id ? ' tab-on' : ''}`} onClick={() => go(v.id)} aria-current={view === v.id}>
-              <span className="tab-n mono">{done[v.id] ? '✓' : i + 1}</span>
+              {/* The numbers are the stages of one project; the list of projects is not a stage. */}
+              <span className="tab-n mono">{v.id === 'projects' ? '≡' : done[v.id] ? '✓' : STAGES.indexOf(v.id) + 1}</span>
               <span className="tab-text">
                 <span className="tab-label">{v.label}</span>
                 <span className="tab-hint">{v.hint}</span>
@@ -194,11 +203,26 @@ export function App() {
 
       {/* Every screen stays mounted and only the current one is shown, so a half-written goal or an unsaved edit is still there after a look at another tab. */}
       <main className="main">
+        {ov.project && view !== 'projects' && view !== 'models' && (
+          <p className="projectbar">
+            <span className="label">Project</span>
+            <strong className="clip">{ov.project.title}</strong>
+            <button className="link" onClick={() => go('projects')}>
+              All projects
+            </button>
+          </p>
+        )}
+        {ov.projects && (
+          <div hidden={view !== 'projects'}>
+            <ProjectsView shell={shell} />
+          </div>
+        )}
+        {/* What is typed here belongs to the open project: another project starts with its own. */}
         <div hidden={view !== 'contract'}>
-          <ContractView shell={shell} />
+          <ContractView key={ov.project?.id} shell={shell} />
         </div>
         <div hidden={view !== 'plan'}>
-          <PlanView shell={shell} />
+          <PlanView key={ov.project?.id} shell={shell} />
         </div>
         <div hidden={view !== 'run'}>
           <RunScreen shell={shell} runId={runId} />

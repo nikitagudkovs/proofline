@@ -25,8 +25,12 @@ const PLAN = `tasks:
 
 test('a run builds in parallel, catches a false "done", sends it back and ends proven', async () => {
   const fx = await fixture(CONTRACT, PLAN);
-  const engine = new ScriptedEngine({
-    T1: writes({ 'a.txt': 'a\n' }, 'a.txt is at the repository root'),
+  const engine: ScriptedEngine = new ScriptedEngine({
+    // T1 stays at work until T2 has started too, so "at the same time" does not hang on how busy the machine is.
+    T1: async (req, attempt) => {
+      for (let i = 0; i < 200 && !engine.requests.some((r) => r.label === 'T2'); i++) await new Promise((r) => setTimeout(r, 10));
+      return writes({ 'a.txt': 'a\n' }, 'a.txt is at the repository root')(req, attempt);
+    },
     // The builder says "done", but the file does not say hello. Only the proof notices.
     T2: writes({ 'b.txt': 'hi\n' }),
     T3: writes({ 'c.txt': 'a.txt\nb.txt\n', 'README.md': '# demo\n\nFiles: a.txt, b.txt\n' }),

@@ -32,7 +32,8 @@ export function RunScreen({ shell, runId }: { shell: Shell; runId?: string }) {
   const { state } = run;
   const working = ov.job?.runId === state.id && (ov.job.kind === 'run' || ov.job.kind === 'verify');
   const contract = ov.contract.contract;
-  const criteria: Criterion[] = run.current && contract ? contract.criteria : [];
+  // An older run is shown with the contract it was made for, from the copy it keeps.
+  const criteria: Criterion[] = run.current && contract ? contract.criteria : (run.contract?.criteria ?? []);
   const last = state.rounds[state.rounds.length - 1];
   // The gates of the settings as they are now, or, for an older run, the ones that run met.
   const met = [...(last?.gates ?? []), ...(state.gateProgress ?? [])];
@@ -71,6 +72,7 @@ export function RunScreen({ shell, runId }: { shell: Shell; runId?: string }) {
       <div className="runbar">
         <div className="runbar-main">
           <select id="run-picker" className="select" aria-label="Run" value={state.id} onChange={(e) => shell.selectRun(e.target.value)}>
+            {!ov.runs.some((r) => r.id === state.id) && <option value={state.id}>{fmtRunId(state.id)} · not in this project</option>}
             {ov.runs.map((r) => (
               <option key={r.id} value={r.id}>
                 {fmtRunId(r.id)} · {r.status === 'unproven' ? 'not proven' : r.status}

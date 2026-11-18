@@ -22,12 +22,13 @@ import { doctor, type Check } from './doctor.js';
 import { fixReview, mergeRun, purgeRun, reached, reviewRun, runAction } from './finish.js';
 import { ClaudeCodeEngine, type Engine } from './engine.js';
 import { loadPlan, planPath, planProblems, savePlan, waves } from './plan.js';
+import { belongs, ensureProject, listProjects, newProject, openProject, projectFiles, projectForGoal, touchProject, updateProject } from './projects.js';
 import { writeReport } from './report.js';
 import { cleanRun, createRun, excludeRunsDir, executeRun, makeCtx, withSessions, type Ctx } from './runner.js';
 import { listSessions, readSession, type SessionListener } from './sessions.js';
 import { shipRun } from './ship.js';
 import { AUTHORING, listRuns, loadState, repoRuns, runDir, saveState, sessionsDir, stateListeners } from './state.js';
-import type { Contract, Plan, RunState, Task } from './types.js';
+import type { Contract, Plan, Project, RunState, Task } from './types.js';
 import { ValidationError, gitTry, isAbort } from './util.js';
 import { roundProven, verifyRun } from './verify.js';
 
@@ -129,11 +130,11 @@ function planView(root: string, contract?: Contract, hash?: string) {
   return { exists: true, plan, problems, waves: order };
 }
 
-function runSummary(root: string, id: string) {
-  const s = loadState(root, id);
+function runSummary(s: RunState) {
   const last = s.rounds[s.rounds.length - 1];
   return {
-    id,
+    id: s.id,
+    project: s.project,
     status: s.status,
     branch: s.branch,
     startedAt: s.startedAt,
@@ -142,8 +143,31 @@ function runSummary(root: string, id: string) {
     total: last?.results.length ?? 0,
     prUrl: s.prUrl,
     prUrls: repoRuns(s).flatMap((r) => (r.prUrl ? [{ repo: r.name, url: r.prUrl }] : [])),
+    merged: !!s.merged || repoRuns(s).some((r) => r.merged),
     cleaned: !!s.cleaned,
   };
+}
+
+/** A project as the browse screen shows it: what was asked, what was agreed, and every run made for it. */
+function projectSummary(root: string, project: Project, open: boolean, states: RunState[]) {
+  const files = projectFiles(root, project.id);
+  return {
+    ...project,
+    open,
+    contract: files.contract,
+    approved: files.approved,
+    tasks: files.plan?.tasks.length ?? 0,
+    runs: states.filter((s) => belongs(project, s)).map(runSummary).reverse(),
+  };
+}
+
+/** The contract a run was made for, from the copy the run keeps. Runs from before that copy existed have none. */
+function runContract(root: string, id: string): Contract | undefined {
+  try {
+    return parseContract(readFileSync(path.join(runDir(root, id), 'contract.yaml'), 'utf8'));
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -161,6 +185,7 @@ export async function startServer(root: string, opts: ServerOptions) {
   const engineFor = (cfg: Config) => (opts.engine ? opts.engine(cfg) : new ClaudeCodeEngine(cfg));
   void refreshAccounts();
   await excludeRunsDir(root, repoNamesOf(root).length > 0);
+  ensureProject(root);
 
   const broadcast = (type: string, data: unknown) => {
     const frame = `event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -201,6 +226,9 @@ export async function startServer(root: string, opts: ServerOptions) {
 
   const overview = () => {
     const c = contractView(root);
+    const project = ensureProject(root);
+    const projects = listProjects(root);
+    const states = listRuns(root).map((id) => loadState(root, id));
     return {
       repo: { name: path.basename(root), root, repos: repoNamesOf(root) },
       job: job ? { kind: job.kind, runId: job.runId, startedAt: job.startedAt } : null,
@@ -210,7 +238,12 @@ export async function startServer(root: string, opts: ServerOptions) {
       accounts,
       contract: c,
       plan: planView(root, c.contract, c.hash),
-      runs: listRuns(root).map((id) => runSummary(root, id)).reverse(),
+      project,
+      projects: projects.map((p) => projectSummary(root, p, p.id === project.id, states)),
+      /** Runs from before projects existed that no project claims. */
+      unfiledRuns: states.filter((s) => !s.project && !projects.some((p) => belongs(p, s))).map(runSummary).reverse(),
+      /** The runs of the open project: the ones the Run screen is about. */
+      runs: states.filter((s) => belongs(project, s)).map(runSummary).reverse(),
       authoring: {
         sessions: listSessions(sessionsDir(root, AUTHORING)).map((m) => ({ ...m, prompt: undefined })),
         log: readLog(root, AUTHORING),
@@ -227,6 +260,8 @@ export async function startServer(root: string, opts: ServerOptions) {
       log: readLog(root, id),
       /** False when the contract on disk is no longer the one this run was made for. */
       current: c.hash === state.contractHash,
+      /** The contract as it was when the run started, so a run stays readable after the contract moves on. */
+      contract: runContract(root, id),
       /** How far the run has come: which finishing steps are on offer. */
       stage: { proven: reached(state, 'proven'), shipped: reached(state, 'shipped'), merged: reached(state, 'merged') },
     };
@@ -263,6 +298,7 @@ export async function startServer(root: string, opts: ServerOptions) {
         try {
           const draft: Contract = { goal: body.goal ?? '', outOfScope: body.outOfScope ?? [], criteria: body.criteria ?? [] };
           saveContract(root, parseContract(serializeContract(draft)));
+          touchProject(root);
         } catch (e) {
           if (e instanceof ValidationError) throw new HttpError(400, 'The contract is not valid yet.', e.problems);
           throw e;
@@ -276,6 +312,9 @@ export async function startServer(root: string, opts: ServerOptions) {
       (_m, body) => {
         const goal = String(body.goal ?? '').trim();
         if (!goal) throw new HttpError(400, 'Describe what you want built first.');
+        if (job) throw new HttpError(409, `A ${job.kind} job is already running. Stop it or wait for it to finish.`);
+        // A project that already has a run is never overwritten: the new goal gets a project of its own.
+        projectForGoal(root, goal);
         start('contract', AUTHORING, async (ctx) => {
           ctx.log('drafting the contract (the planner reads the repository first)');
           const contract = await draftContract(ctx, goal);
@@ -289,6 +328,36 @@ export async function startServer(root: string, opts: ServerOptions) {
       /^\/api\/contract\/approve$/,
       () => {
         approveContract(root);
+        touchProject(root);
+        return overview();
+      },
+    ],
+
+    [
+      'POST',
+      /^\/api\/projects$/,
+      (_m, body) => {
+        if (job) throw new HttpError(409, `A ${job.kind} job is running. Stop it or wait for it to finish.`);
+        newProject(root, String(body.goal ?? ''));
+        return overview();
+      },
+    ],
+    [
+      'POST',
+      /^\/api\/projects\/([\w-]+)\/open$/,
+      (m) => {
+        if (job) throw new HttpError(409, `A ${job.kind} job is running. Stop it or wait for it to finish.`);
+        if (!listProjects(root).some((p) => p.id === m[1])) throw new HttpError(404, 'There is no such project here.');
+        openProject(root, m[1]);
+        return overview();
+      },
+    ],
+    [
+      'PUT',
+      /^\/api\/projects\/([\w-]+)$/,
+      (m, body) => {
+        if (!listProjects(root).some((p) => p.id === m[1])) throw new HttpError(404, 'There is no such project here.');
+        updateProject(root, m[1], { title: body.title === undefined ? undefined : String(body.title) });
         return overview();
       },
     ],

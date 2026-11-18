@@ -26,8 +26,9 @@ export function ContractView({ shell }: { shell: Shell }) {
   const [draft, setDraft] = useState<Contract>(saved ?? blank());
   const [dirty, setDirty] = useState(false);
   // The goal is the one thing here a person types at length, so it also survives a reload or a dropped connection.
-  const goalKey = `proofline.goal:${ov.repo.root}`;
-  const [goal, setGoalText] = useState(() => recall(goalKey));
+  // What is being typed wins over what the project last had drafted from.
+  const goalKey = `proofline.goal:${ov.repo.root}:${ov.project?.id ?? ''}`;
+  const [goal, setGoalText] = useState(() => recall(goalKey) || ov.project?.goal || '');
   const setGoal = (text: string) => {
     setGoalText(text);
     try {
@@ -68,6 +69,17 @@ export function ContractView({ shell }: { shell: Shell }) {
   const editCriterion = (i: number, patch: Partial<Criterion>) =>
     edit({ ...draft, criteria: draft.criteria.map((k, j) => (j === i ? { ...k, ...patch } : k)) });
 
+  const draftGoal = async () => {
+    if (!(await act(() => api.draftContract(goal)))) return;
+    // The project has the goal now. Dropping the browser's copy keeps it from showing up on this
+    // project again if the draft went to a new one.
+    try {
+      localStorage.removeItem(goalKey);
+    } catch {
+      // nothing was stored
+    }
+  };
+
   const drafting = ov.job?.kind === 'contract';
   const planner = ov.authoring.sessions.filter((s) => s.label === 'contract').pop();
   const status = !ov.contract.exists ? 'none' : dirty ? 'draft' : ov.contract.approved ? 'approved' : 'draft';
@@ -86,12 +98,12 @@ export function ContractView({ shell }: { shell: Shell }) {
             onChange={(e) => setGoal(e.target.value)}
           />
           <div className="row">
-            <button className="btn btn-primary" disabled={readOnly || shell.busy || !goal.trim()} onClick={() => act(() => api.draftContract(goal))}>
+            <button className="btn btn-primary" disabled={readOnly || shell.busy || !goal.trim()} onClick={draftGoal}>
               Draft a contract
             </button>
             <span className="muted">
               Uses the planner model ({ov.config.models.planner || 'Claude Code default'}).{' '}
-              {ov.contract.exists && 'A new draft replaces the contract below.'}
+              {ov.contract.exists && (ov.runs.length > 0 && ov.projects ? 'This project already has a run, so a new draft starts a new project; this one is kept.' : 'A new draft replaces the contract below.')}
             </span>
           </div>
           {drafting && planner && (

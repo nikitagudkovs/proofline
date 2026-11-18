@@ -59,6 +59,7 @@ opens a local page for the repository, or the workspace of several, that you are
 
 | Screen | What you see and control |
 |---|---|
+| **Projects** | Every goal worked on here, newest first: what was asked, the contract, and each run with its report and pull requests. Open an earlier one to read it or carry on with it, or start a new one from its goal. |
 | **Contract** | Type a goal and let the planner draft the contract, or write it yourself. Edit any requirement or proof, then approve. An edit after approval visibly voids it. |
 | **Plan** | The building blocks: tasks grouped into waves that run in parallel, a coverage strip that turns red for a requirement nobody is responsible for, and a model picker on every task. In a workspace, each task also shows the repository it changes. |
 | **Run** | Start, stop and resume, then finish: open the pull requests, merge them, run your own last steps, clean up. Each task shows its status and the step its agent is on right now; each requirement shows whether its proof failed before the work, its verdict per round, and the evidence. |
@@ -164,6 +165,9 @@ proofline go "Let users export their invoices as CSV from the billing page"
 | `merge` | Merges the run's pull requests into the branches they target; proven runs only |
 | `action "<name>"` | Runs a finishing action from the settings |
 | `clean` | Removes a run's worktrees; the branch and the records stay. `--all` also removes session records and local branches |
+| `projects` | Lists every goal worked on here, with its stage and runs; the open one is marked |
+| `open <id>` | Makes another project the open one |
+| `new ["<goal>"]` | Puts the open project away and starts an empty one |
 
 `run` exits 0 when the contract is proven and 2 when it is not, so it can gate a pipeline.
 
@@ -231,6 +235,16 @@ reviewInstructions: |
   Every new endpoint checks that the record belongs to the signed-in account.
   New text is added to every locale file.
 ```
+
+### Projects: nothing is overwritten by the next goal
+
+A goal, its contract, its plan and its runs belong together, and they are kept together as a **project**. One project is open at a time. Its files are where the commands above expect them, at the top of `.proofline/`, so they can be edited by hand. Every other project rests in `.proofline/projects/<id>/` until it is opened again.
+
+- `proofline contract "<goal>"` on a project that already has a run starts a **new project** for that goal and puts the old one away. While a project has no run yet, a new draft simply replaces its contract: that is still the same piece of work being shaped.
+- `proofline open <id>` (or **Open** on the Projects screen) swaps the files: the open project's are put away, the other's are brought back, and `status`, `verify`, `review`, `ship` and the rest act on that project's latest run again. Finished work can be checked again, reviewed, or have findings sent back, weeks later.
+- Each run keeps a copy of the contract and plan it was made for, so a run stays readable after its contract has moved on.
+- The first time this version sees a folder that was used before, the work in it becomes the first project, with the runs made for its contract. Older runs made for contracts that have since been replaced are listed on their own, reports included.
+- The goal is kept as it was typed, next to the contract the planner made of it.
 
 ### The contract
 
@@ -348,7 +362,7 @@ npm install
 npm test
 ```
 
-The tests in [`test/run.test.ts`](test/run.test.ts) are the best tour of the behaviour: a builder that falsely reports "done" and is caught by its proof, two tasks that collide, a run that is stopped or interrupted and resumed, and a contract edited mid-run. [`test/workspace.test.ts`](test/workspace.test.ts) does the same for a delivery across two repositories. [`test/server.test.ts`](test/server.test.ts) drives the control room's API the same way, and [`test/review.test.ts`](test/review.test.ts) covers the review of a whole change and sending its findings back, and [`test/gates.test.ts`](test/gates.test.ts) the gates: one that catches a delivery, one that was already red, one per repository.
+The tests in [`test/run.test.ts`](test/run.test.ts) are the best tour of the behaviour: a builder that falsely reports "done" and is caught by its proof, two tasks that collide, a run that is stopped or interrupted and resumed, and a contract edited mid-run. [`test/workspace.test.ts`](test/workspace.test.ts) does the same for a delivery across two repositories. [`test/server.test.ts`](test/server.test.ts) drives the control room's API the same way, and [`test/review.test.ts`](test/review.test.ts) covers the review of a whole change and sending its findings back, and [`test/gates.test.ts`](test/gates.test.ts) the gates: one that catches a delivery, one that was already red, one per repository. [`test/projects.test.ts`](test/projects.test.ts) shows a second goal starting a project of its own and the first one being opened again.
 
 To rebuild the recorded demo from a run of your own: finish a run with `proofline ui` open, then `node scripts/export-demo.mjs` and `node scripts/build-demo.mjs`.
 

@@ -51,6 +51,9 @@ export const api = {
   action: (id: string, name: string) => call('POST', `/api/runs/${id}/actions`, { name }),
   cleanUp: (id: string) => call<{ kept: string[] }>('POST', `/api/runs/${id}/clean`, { all: true }),
   refreshAccounts: () => call('POST', '/api/accounts/refresh', {}),
+  newProject: (goal = '') => call<Overview>('POST', '/api/projects', { goal }),
+  openProject: (id: string) => call<Overview>('POST', `/api/projects/${id}/open`, {}),
+  renameProject: (id: string, title: string) => call<Overview>('PUT', `/api/projects/${id}`, { title }),
   reportUrl: (id: string) => `/api/runs/${id}/report.html?token=${boot.token ?? ''}`,
 };
 
