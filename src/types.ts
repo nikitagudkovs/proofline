@@ -73,12 +73,28 @@ export interface ProofResult {
   at?: string;
 }
 
+/** How a gate (a command from the settings that every delivery must pass) came out in one round. */
+export interface GateResult {
+  gate: string;
+  /** The command, as it was run. */
+  run: string;
+  /** skipped: it already failed before the work, so it can not tell whether this change broke anything. It does not count. */
+  verdict: Verdict | 'skipped';
+  evidence: string;
+  /** Full output, relative to the run directory. */
+  logFile?: string;
+  durationMs: number;
+  at?: string;
+}
+
 export interface VerificationRound {
   n: number;
   /** Commit the proofs were run against. In a workspace: one short commit per repository. */
   head: string;
   at: string;
   results: ProofResult[];
+  /** The gates from the settings, run on the same commit. Absent when there are none. */
+  gates?: GateResult[];
 }
 
 export interface Usage {
@@ -152,9 +168,13 @@ export interface RunState {
    * A proof that already passes there is a regression guard: it shows nothing new was built.
    */
   baseline?: Record<string, Verdict>;
+  /** Verdict of each gate on the base commit. One that fails there is skipped for the whole run. */
+  gateBaseline?: Record<string, Verdict>;
   rounds: VerificationRound[];
   /** Verdicts of the verification round in progress, so they can be shown as they arrive. */
   progress?: ProofResult[];
+  /** The same, for the gates. */
+  gateProgress?: GateResult[];
   usage: Record<'planner' | 'builder' | 'verifier', Usage>;
   prUrl?: string;
   /** Single repository: the pull request was merged from here. A workspace keeps this per repository. */

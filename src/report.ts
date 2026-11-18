@@ -1,9 +1,9 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { repoRuns, runDir } from './state.js';
-import type { Contract, Criterion, Plan, ProofResult, RunState, TaskState } from './types.js';
+import type { Contract, Criterion, GateResult, Plan, ProofResult, RunState, TaskState } from './types.js';
 import { fmtDuration } from './util.js';
-import { shortHead } from './verify.js';
+import { failedGates, shortHead } from './verify.js';
 
 interface Row {
   criterion: Criterion;
@@ -27,17 +27,23 @@ function rows(state: RunState, contract: Contract): Row[] {
 }
 
 /** Failures from earlier rounds: what verification caught before the run ended. */
-function caught(state: RunState): { round: number; result: ProofResult }[] {
-  return state.rounds
-    .slice(0, -1)
-    .flatMap((round) => round.results.filter((r) => r.verdict === 'fail').map((result) => ({ round: round.n, result })));
+function caught(state: RunState): { round: number; result: Pick<ProofResult, 'criterion' | 'evidence'> }[] {
+  return state.rounds.slice(0, -1).flatMap((round) => [
+    ...round.results.filter((r) => r.verdict === 'fail').map((result) => ({ round: round.n, result })),
+    ...failedGates(round).map((g) => ({ round: round.n, result: { criterion: g.gate, evidence: g.evidence } })),
+  ]);
 }
+
+const lastGates = (state: RunState): GateResult[] => state.rounds[state.rounds.length - 1]?.gates ?? [];
+const gateMark = (g: GateResult) => (g.verdict === 'pass' ? '✅' : g.verdict === 'fail' ? '❌' : '➖');
 
 function headline(state: RunState, contract: Contract): string {
   const last = state.rounds[state.rounds.length - 1];
   const passed = last ? last.results.filter((r) => r.verdict === 'pass').length : 0;
   const total = contract.criteria.length;
   if (!last) return `Not verified yet: 0 of ${total} criteria proven`;
+  const gates = failedGates(last).map((g) => g.gate);
+  if (gates.length) return `Not proven: ${passed} of ${total} criteria, and ${gates.join(', ')} ${gates.length === 1 ? 'fails' : 'fail'}`;
   return passed === total ? `Proven: ${passed} of ${total} criteria` : `Not proven: ${passed} of ${total} criteria`;
 }
 
@@ -103,6 +109,13 @@ export function renderMarkdown(state: RunState, contract: Contract, plan: Plan):
     out.push('```', r.result?.evidence ?? 'not verified', '```', '');
   }
 
+  if (lastGates(state).length) {
+    out.push('## Gates', '', '_Commands from the settings that every delivery must pass, run on the same commit as the proofs._', '');
+    for (const g of lastGates(state)) {
+      out.push(`**${g.gate}** ${gateMark(g)} \`${g.run}\`${g.verdict === 'skipped' ? ' (skipped, not counted)' : ''}`, '', '```', g.evidence, '```', '');
+    }
+  }
+
   const sentBack = caught(state);
   if (sentBack.length) {
     out.push('## Caught by verification and sent back', '');
@@ -138,8 +151,9 @@ export function renderMarkdown(state: RunState, contract: Contract, plan: Plan):
     out.push('', '## Verification rounds', '');
     for (const round of state.rounds) {
       const failed = round.results.filter((r) => r.verdict === 'fail').map((r) => r.criterion);
+      const sent = [...failed, ...failedGates(round).map((g) => g.gate)];
       out.push(
-        `- Round ${round.n} at \`${shortHead(round.head)}\`: ${round.results.length - failed.length} of ${round.results.length} proven${failed.length ? `, sent back: ${failed.join(', ')}` : ''}`,
+        `- Round ${round.n} at \`${shortHead(round.head)}\`: ${round.results.length - failed.length} of ${round.results.length} proven${sent.length ? `, sent back: ${sent.join(', ')}` : ''}`,
       );
     }
   }
@@ -198,6 +212,14 @@ export function renderHtml(state: RunState, contract: Contract, plan: Plan): str
         .join('')}</ul>\n  <p class="muted">One independent read beyond the contract. It informs the person who merges; it is not a proof.</p>\n`
     : '';
 
+  const gateRows = lastGates(state).map((g) => {
+    const v = g.verdict === 'skipped' ? 'none' : g.verdict;
+    return `<tr><td class="verdict"><span class="pill ${v}">${g.verdict}</span></td><td>${esc(g.gate)}<div class="proof"><code>${esc(g.run)}</code></div></td><td><pre>${esc(g.evidence)}</pre></td></tr>`;
+  });
+  const gates = gateRows.length
+    ? `\n  <h2>Gates</h2>\n  <p class="muted">Commands from the settings that every delivery must pass, run on the same commit as the proofs.</p>\n  <div class="scroll"><table class="gates">\n    <thead><tr><th></th><th>Gate</th><th>Evidence</th></tr></thead>\n    <tbody>\n${gateRows.join('\n')}\n    </tbody>\n  </table></div>\n`
+    : '';
+
   const caughtItems = caught(state).map(
     (c) => `<li><span class="pill fail">${c.result.criterion} · round ${c.round}</span><pre>${esc(c.result.evidence)}</pre></li>`,
   );
@@ -249,6 +271,7 @@ export function renderHtml(state: RunState, contract: Contract, plan: Plan): str
   table.matrix th:nth-child(1) { width:84px; } table.matrix th:nth-child(3) { width:120px; }
   table.matrix th:nth-child(4) { width:84px; } table.matrix th:nth-child(5) { width:96px; }
   table.matrix th:nth-child(6) { width:30%; }
+  table.gates th:nth-child(1) { width:84px; } table.gates th:nth-child(3) { width:50%; }
   .proof code { word-break:break-word; }
   .cid { font-weight:700; font-size:12px; color:var(--muted); }
   .proof { margin-top:6px; font-size:13px; color:var(--muted); }
@@ -285,7 +308,7 @@ export function renderHtml(state: RunState, contract: Contract, plan: Plan): str
 ${body}
     </tbody>
   </table></div>
-${sentBack}
+${gates}${sentBack}
   <h2>Tasks</h2>
   <div class="scroll"><table>
     <thead><tr><th>Task</th><th>Status</th><th>Attempts</th><th>Commits</th><th>Builder's summary (not proof)</th></tr></thead>

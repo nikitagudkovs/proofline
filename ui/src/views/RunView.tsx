@@ -1,6 +1,6 @@
 import { api, now } from '../api';
 import type { Shell } from '../App';
-import type { Criterion, ProofResult, RunView, SessionMeta, Task, TaskState } from '../types';
+import type { Criterion, GateResult, ProofResult, RunView, SessionMeta, Task, TaskState } from '../types';
 import { Empty, Pill, Section, Tag, fmtClock, fmtCost, fmtDuration, fmtRunId } from '../ui';
 import { toWaves } from './PlanView';
 
@@ -34,6 +34,9 @@ export function RunScreen({ shell, runId }: { shell: Shell; runId?: string }) {
   const contract = ov.contract.contract;
   const criteria: Criterion[] = run.current && contract ? contract.criteria : [];
   const last = state.rounds[state.rounds.length - 1];
+  // The gates of the settings as they are now, or, for an older run, the ones that run met.
+  const met = [...(last?.gates ?? []), ...(state.gateProgress ?? [])];
+  const gates = [...new Map([...(run.current ? (ov.gates ?? []) : []).map((g) => [g.name, g.run] as const), ...met.map((g) => [g.gate, g.run] as const)])];
   // While a round is being verified, count the verdicts that are already in.
   const passed = (state.progress ?? last?.results ?? []).filter((r) => r.verdict === 'pass').length;
   const total = criteria.length || last?.results.length || 0;
@@ -280,6 +283,18 @@ export function RunScreen({ shell, runId }: { shell: Shell; runId?: string }) {
                 </li>
               ))}
           </ol>
+          {gates.length > 0 && (
+            <>
+              <p className="gates-head muted">
+                <span className="label">Gates</span> Your own commands from the settings. Every delivery has to pass them, whatever its contract says.
+              </p>
+              <ol className="checks">
+                {gates.map(([name, command]) => (
+                  <GateRow key={name} name={name} command={command} run={run} />
+                ))}
+              </ol>
+            </>
+          )}
         </Section>
       </div>
 
@@ -367,6 +382,56 @@ function TaskCard({ task, needs, run, shell }: { task: TaskState; needs: string[
         </span>
       ))}
     </button>
+  );
+}
+
+function GateRow({ name, command, run }: { name: string; command: string; run: RunView }) {
+  const { state } = run;
+  const history: (GateResult | undefined)[] = state.rounds.map((r) => r.gates?.find((x) => x.gate === name));
+  const arriving = state.gateProgress?.find((x) => x.gate === name);
+  const verifying = !!state.progress || !!state.gateProgress;
+  const result = arriving ?? (verifying ? undefined : history[history.length - 1]);
+  const earlier = verifying ? history : history.slice(0, -1);
+  return (
+    <li className="check">
+      <div className="check-verdict">
+        {result ? <Pill status={result.verdict === 'skipped' ? 'pending' : result.verdict}>{result.verdict === 'skipped' ? 'skipped' : undefined}</Pill> : <Pill status="pending">{verifying ? 'waiting' : 'not checked'}</Pill>}
+        {history.length > 1 && (
+          <span className="rounds" title="Verdict in each verification round">
+            {history.map((h, i) => (
+              <span key={i} className={`round round-${h?.verdict === 'pass' || h?.verdict === 'fail' ? h.verdict : 'none'}`}>
+                {i + 1}
+              </span>
+            ))}
+          </span>
+        )}
+      </div>
+      <div className="check-body">
+        <p className="check-text">{name}</p>
+        <p className="check-proof">
+          <span className="label">command</span> <code>{command}</code>
+        </p>
+        <p className="check-facts muted">
+          {state.gateBaseline?.[name] === 'pass' && <span>Passed before the work, as it should.</span>}
+          {state.gateBaseline?.[name] === 'fail' && <span className="warn">Already failed before the work, so it is skipped and does not count. Fix it on the base branch.</span>}
+        </p>
+        {result && result.verdict !== 'skipped' && (
+          <details className="evidence" open={result.verdict === 'fail'}>
+            <summary>Evidence</summary>
+            <pre>{result.evidence}</pre>
+          </details>
+        )}
+        {earlier.map(
+          (h, i) =>
+            h?.verdict === 'fail' && (
+              <details key={i} className="evidence evidence-fail">
+                <summary>Why it was sent back in round {i + 1}</summary>
+                <pre>{h.evidence}</pre>
+              </details>
+            ),
+        )}
+      </div>
+    </li>
   );
 }
 

@@ -1236,3 +1236,12 @@ textarea.input {
     gap: 2px;
   }
 }
+.gates-head {
+  margin: 4px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+.gates-head .label {
+  margin-right: 6px;
+}

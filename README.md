@@ -91,8 +91,8 @@ flowchart LR
 2. **Plan.** The planner splits the contract into tasks with dependencies. A validator, not the planner, decides whether the plan is acceptable: every criterion must have a task responsible for it, and every task must trace back to a criterion. Work nobody asked for does not get planned.
 3. **Baseline.** Before any work, each command proof is run on the untouched code. A proof worth having fails here. One that already passes is labelled a guard in the report: fine for "the existing tests still pass", a warning sign for anything else.
 4. **Build.** Tasks with no dependency between them are built at the same time, each by its own agent in its own git worktree, then merged one by one into an integration branch. Your checkout is never touched. If two tasks collide, the later one is rebuilt on top of the merged result instead of being hand-merged.
-5. **Verify.** Command proofs are run by proofline itself: an exit code cannot be talked into passing. Review proofs go to a read-only agent that sees the criterion and the code, never the builder's reasoning, and must cite `file:line` evidence or fail the line.
-6. **Send back.** Failed criteria return to a builder together with the verifier's evidence, and then *every* criterion is verified again, so a fix cannot quietly break a neighbour. After a set number of rounds the run stops and says plainly what is not proven.
+5. **Verify.** Command proofs are run by proofline itself: an exit code cannot be talked into passing. Review proofs go to a read-only agent that sees the criterion and the code, never the builder's reasoning, and must cite `file:line` evidence or fail the line. Your [gates](#gates) (a typecheck, a linter) run on the same commit: a delivery that proves every line and no longer compiles is not proven.
+6. **Send back.** Failed criteria and failed gates return to a builder together with the evidence, and then *everything* is verified again, so a fix cannot quietly break a neighbour. After a set number of rounds the run stops and says plainly what is not proven.
 7. **Report.** One page that links each requirement to the tasks that built it, the commits that changed it and the evidence that proves it. `proofline ship` pushes the branch and opens a pull request with that page as its description.
 
 The same seven steps run across several repositories at once; what changes is described under [A frontend and a backend in one delivery](#a-frontend-and-a-backend-in-one-delivery).
@@ -291,6 +291,27 @@ repos:                # or per repository of a workspace
 
 A single task can use a different model from the other builders: set `model:` on it in `.proofline/plan.yaml`, or pick it on the Plan screen.
 
+#### Gates
+
+A contract says what this delivery must do. It does not say "and the project still typechecks", and a contract that had to repeat that every time would bury its own lines. Gates are for that: commands every delivery must pass, written once in the settings.
+
+```yaml
+gates:
+  - name: typecheck
+    run: npx tsc --noEmit
+    timeoutSec: 900     # optional; default is the commands' timeout
+repos:                  # in a workspace, a repository's gates run inside it
+  - path: web
+    gates:
+      - name: lint
+        run: npm run lint
+```
+
+- Each gate runs once per verification round, on the merged result, after the command proofs and before any review agent starts. It is a command run by proofline, so it costs time and no tokens.
+- A failed gate is treated like a failed criterion: the run is not proven, and the gate's output goes back to a builder.
+- Before any work, each gate is run on the untouched code. One that is already red there can not tell whether the delivery broke anything, so it is **skipped for that run** and the report says so. Nobody is sent to fix what the delivery did not break; get it green on the base branch and it counts again.
+- Builders are told which gates are coming. They are not asked to run them: a whole-project typecheck in every parallel worktree is how a machine runs out of memory.
+
 ## Design decisions
 
 **The proof is chosen before the work, by someone other than the builder.** An agent asked to build and then to confirm its own work has every reason to find that it succeeded. Here the proof exists first, a person signs it off, and the builder is told it will be checked with it.
@@ -313,6 +334,7 @@ More in [docs/design.md](docs/design.md).
 
 ## Limits, stated plainly
 
+- **Gates see what a command can see.** A typecheck or a linter catches code that no longer fits together. Nothing here opens the product and looks at it: a screen that is too tall on a phone passes every gate.
 - **A weak proof proves little.** If the contract says `npm test` and the builder writes a test that asserts nothing, the line passes. The defence is the human approval of the contract and the lint; it is not automatic.
 - **Builders run shell commands** in their worktree with your user's permissions. Point proofline at repositories and goals you would hand to Claude Code directly, or run it in a container.
 - **Review proofs are judgement.** They are independent and must cite evidence, but they are still a model reading code. Prefer commands.
@@ -326,7 +348,7 @@ npm install
 npm test
 ```
 
-The tests in [`test/run.test.ts`](test/run.test.ts) are the best tour of the behaviour: a builder that falsely reports "done" and is caught by its proof, two tasks that collide, a run that is stopped or interrupted and resumed, and a contract edited mid-run. [`test/workspace.test.ts`](test/workspace.test.ts) does the same for a delivery across two repositories. [`test/server.test.ts`](test/server.test.ts) drives the control room's API the same way, and [`test/review.test.ts`](test/review.test.ts) covers the review of a whole change and sending its findings back.
+The tests in [`test/run.test.ts`](test/run.test.ts) are the best tour of the behaviour: a builder that falsely reports "done" and is caught by its proof, two tasks that collide, a run that is stopped or interrupted and resumed, and a contract edited mid-run. [`test/workspace.test.ts`](test/workspace.test.ts) does the same for a delivery across two repositories. [`test/server.test.ts`](test/server.test.ts) drives the control room's API the same way, and [`test/review.test.ts`](test/review.test.ts) covers the review of a whole change and sending its findings back, and [`test/gates.test.ts`](test/gates.test.ts) the gates: one that catches a delivery, one that was already red, one per repository.
 
 To rebuild the recorded demo from a run of your own: finish a run with `proofline ui` open, then `node scripts/export-demo.mjs` and `node scripts/build-demo.mjs`.
 

@@ -4,6 +4,23 @@ import path from 'node:path';
 import YAML from 'yaml';
 import { DIR } from './contract.js';
 
+/**
+ * A gate: your own command that every delivery must pass, whatever its contract says (a typecheck,
+ * a linter). It is run on the merged result in every verification round, next to the contract's proofs.
+ */
+export interface GateConfig {
+  name: string;
+  /** Shell command. Exit code 0 passes. */
+  run: string;
+  /** Empty means the commands' timeout from the settings. */
+  timeoutSec?: number;
+}
+
+/** A gate as a run sees it. In a workspace, one that belongs to a repository is named after it and runs inside it. */
+export interface Gate extends GateConfig {
+  repo?: string;
+}
+
 /** One repository of a workspace: a folder next to the others, with its own git history. */
 export interface RepoConfig {
   path: string;
@@ -11,6 +28,8 @@ export interface RepoConfig {
   setup: string;
   /** Start every run from this branch as it is on the remote, whatever the checkout is on. */
   base?: string;
+  /** Gates that run inside this repository. */
+  gates?: GateConfig[];
 }
 
 /** A repository as a run sees it. A single-repository run has one, with an empty name. */
@@ -63,6 +82,11 @@ export interface Config {
   mergeMethod: 'merge' | 'squash' | 'rebase';
   /** Finishing actions. Set in the file only: the control room can run them but never edit them. */
   actions: ActionConfig[];
+  /**
+   * Gates, run from the folder the proofs run in. In a workspace that is the folder holding the
+   * repositories; a gate for one repository goes under that repository instead.
+   */
+  gates: GateConfig[];
   /** Where task worktrees live. Outside the repository, so your own tooling never scans them. */
   worktreeDir: string;
   /**
@@ -90,6 +114,7 @@ export const DEFAULTS: Config = {
   repos: [],
   mergeMethod: 'merge',
   actions: [],
+  gates: [],
   worktreeDir: path.join(os.homedir(), '.proofline', 'worktrees'),
   auth: 'subscription',
   models: { planner: '', builder: '', verifier: '', reviewer: '' },
@@ -110,11 +135,31 @@ function readRaw(root: string): Record<string, any> {
   return existsSync(file) ? (YAML.parse(readFileSync(file, 'utf8')) ?? {}) : {};
 }
 
+function parseGates(raw: unknown): GateConfig[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((g) => ({
+      name: String(g?.name ?? '').trim(),
+      run: String(g?.run ?? '').trim(),
+      ...(Number(g?.timeoutSec) > 0 ? { timeoutSec: Number(g.timeoutSec) } : {}),
+    }))
+    .filter((g, i, all) => g.name && g.run && all.findIndex((x) => x.name === g.name) === i);
+}
+
 /** `repos` may be written as plain folder names or as { path, setup }. */
 function parseRepos(raw: unknown): RepoConfig[] {
   if (!Array.isArray(raw)) return [];
   return raw
-    .map((r) => (typeof r === 'string' ? { path: r, setup: '' } : { path: String(r?.path ?? ''), setup: String(r?.setup ?? ''), ...(r?.base ? { base: String(r.base).trim() } : {}) }))
+    .map((r) =>
+      typeof r === 'string'
+        ? { path: r, setup: '' }
+        : {
+            path: String(r?.path ?? ''),
+            setup: String(r?.setup ?? ''),
+            ...(r?.base ? { base: String(r.base).trim() } : {}),
+            ...(parseGates(r?.gates).length ? { gates: parseGates(r.gates) } : {}),
+          },
+    )
     .map((r) => ({ ...r, path: r.path.trim().replace(/^\.\//, '').replace(/\/+$/, '') }))
     .filter((r) => r.path);
 }
@@ -142,6 +187,7 @@ export function loadConfig(root: string): Config {
     ...raw,
     repos: parseRepos(raw.repos),
     actions: parseActions(raw.actions),
+    gates: parseGates(raw.gates),
     mergeMethod: ['squash', 'rebase'].includes(raw.mergeMethod) ? raw.mergeMethod : 'merge',
     reviewInstructions: typeof raw.reviewInstructions === 'string' ? raw.reviewInstructions.trim() : '',
     base: typeof raw.base === 'string' ? raw.base.trim() : '',
@@ -155,6 +201,12 @@ export function loadConfig(root: string): Config {
 export function repoList(root: string, cfg: Config): Repo[] {
   if (cfg.repos.length === 0) return [{ name: '', root, setup: cfg.setup, ...(cfg.base ? { base: cfg.base } : {}) }];
   return cfg.repos.map((r) => ({ name: r.path, root: path.join(root, r.path), setup: r.setup, ...(r.base ? { base: r.base } : {}) }));
+}
+
+/** Every gate of a run: each repository's own, under the repository's name, then the ones for the whole. */
+export function gateList(cfg: Config): Gate[] {
+  const own = cfg.repos.flatMap((r) => (r.gates ?? []).map((g) => ({ ...g, name: `${r.path}: ${g.name}`, repo: r.path })));
+  return [...own, ...cfg.gates];
 }
 
 /** The nearest folder at or above `start` whose settings list several repositories. */
@@ -176,6 +228,7 @@ export function workspaceTemplate(repos: string[]): string {
 # "setup" runs in every copy of that repository before agents and proofs use it.
 # "base: develop" on a repository starts every run from origin/develop, whatever its checkout is on.
 # PROOFLINE_SOURCE is your own checkout of it: ln -sfn "$PROOFLINE_SOURCE/node_modules" node_modules
+# "gates" on a repository run inside it: gates: [{ name: typecheck, run: npx tsc --noEmit }]
 repos:
 ${repos.map((r) => `  - path: ${r}\n    setup: ""`).join('\n')}
 `;
@@ -210,4 +263,10 @@ models:
 # reviewInstructions: |
 #   Every new endpoint checks that the record belongs to the signed-in account.
 #   New text is added to every locale file.
+
+# Gates: commands every delivery must pass, whatever its contract says. They run on the merged
+# result in every verification round, and a failure goes back to a builder like a failed criterion.
+# gates:
+#   - name: typecheck
+#     run: npx tsc --noEmit
 `;

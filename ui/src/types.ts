@@ -1,9 +1,9 @@
-import type { Config } from '../../src/config';
+import type { Config, Gate } from '../../src/config';
 import type { Check } from '../../src/doctor';
 import type { SessionEvent, SessionMeta } from '../../src/sessions';
-import type { Contract, Criterion, Plan, ProofResult, RunState, Task, TaskState } from '../../src/types';
+import type { Contract, Criterion, GateResult, Plan, ProofResult, RunState, Task, TaskState } from '../../src/types';
 
-export type { Check, Config, Contract, Criterion, Plan, ProofResult, RunState, SessionEvent, SessionMeta, Task, TaskState };
+export type { Check, Config, Contract, Criterion, Gate, GateResult, Plan, ProofResult, RunState, SessionEvent, SessionMeta, Task, TaskState };
 
 export interface LogLine {
   t: string;
@@ -28,6 +28,8 @@ export interface Overview {
   job: { kind: 'contract' | 'plan' | 'run' | 'verify' | 'ship' | 'review' | 'merge' | 'action' | 'clean'; runId: string; startedAt: string } | null;
   lastError: string;
   config: Config;
+  /** The gates from the settings, as a run would see them. Absent in recordings made before these existed. */
+  gates?: Gate[];
   accounts: Check[];
   contract: { exists: boolean; contract?: Contract; hash?: string; approved: boolean; warnings: string[]; problems?: string[] };
   plan: { exists: boolean; plan?: Plan; problems: string[]; waves: string[][] };

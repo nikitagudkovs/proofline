@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
 import { draftContract, draftPlan } from './authoring.js';
-import { configPath, loadConfig, repoList, type Config } from './config.js';
+import { configPath, gateList, loadConfig, repoList, type Config } from './config.js';
 import {
   DIR,
   approvalPath,
@@ -29,7 +29,7 @@ import { shipRun } from './ship.js';
 import { AUTHORING, listRuns, loadState, repoRuns, runDir, saveState, sessionsDir, stateListeners } from './state.js';
 import type { Contract, Plan, RunState, Task } from './types.js';
 import { ValidationError, gitTry, isAbort } from './util.js';
-import { verifyRun } from './verify.js';
+import { roundProven, verifyRun } from './verify.js';
 
 export interface ServerOptions {
   port: number;
@@ -206,6 +206,7 @@ export async function startServer(root: string, opts: ServerOptions) {
       job: job ? { kind: job.kind, runId: job.runId, startedAt: job.startedAt } : null,
       lastError,
       config: loadConfig(root),
+      gates: gateList(loadConfig(root)),
       accounts,
       contract: c,
       plan: planView(root, c.contract, c.hash),
@@ -376,7 +377,7 @@ export async function startServer(root: string, opts: ServerOptions) {
           const contract = loadContract(root);
           if (hashContract(contract) !== state.contractHash) throw new Error('The contract changed since this run. Start a new run.');
           const round = await verifyRun(ctx, state, contract);
-          state.status = round.results.every((r) => r.verdict === 'pass') ? 'proven' : 'unproven';
+          state.status = roundProven(round) ? 'proven' : 'unproven';
           saveState(root, state);
           writeReport(root, state, contract, loadPlan(root));
         });

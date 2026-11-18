@@ -17,7 +17,7 @@ import { cleanRun, createRun, excludeRunsDir, executeRun, makeCtx, repoNames, wi
 import { AUTHORING, latestRun, listRuns, loadState, repoRuns, runDir, saveState } from './state.js';
 import type { RunState } from './types.js';
 import { exec, git } from './util.js';
-import { verifyRun } from './verify.js';
+import { failedGates, roundProven, verifyRun } from './verify.js';
 
 const HELP = `proofline: a contract-first orchestrator for coding agents
 
@@ -118,7 +118,8 @@ function summary(state: RunState): string {
   const last = state.rounds[state.rounds.length - 1];
   const total = last?.results.length ?? 0;
   const passed = last?.results.filter((r) => r.verdict === 'pass').length ?? 0;
-  const text = `${passed} of ${total} criteria`;
+  const gates = failedGates(last).map((g) => g.gate);
+  const text = `${passed} of ${total} criteria${gates.length ? `, and ${gates.join(', ')} ${gates.length === 1 ? 'fails' : 'fail'}` : ''}`;
   return state.status === 'proven' ? green(`Proven: ${text}`) : red(`Not proven: ${text}`);
 }
 
@@ -128,6 +129,10 @@ function finish(ctx: Ctx, state: RunState): number {
   const last = state.rounds[state.rounds.length - 1];
   for (const r of last?.results.filter((x) => x.verdict === 'fail') ?? []) {
     console.log(`  ${red('✗')} ${r.criterion}  ${r.evidence.split('\n')[0]}`);
+  }
+  for (const g of last?.gates ?? []) {
+    if (g.verdict === 'fail') console.log(`  ${red('✗')} ${g.gate} (gate)  ${g.evidence.split('\n')[0]}`);
+    if (g.verdict === 'skipped') console.log(`  ${paint(33, '!')} ${g.gate} (gate) was skipped: it already failed before the work`);
   }
   for (const t of Object.values(state.tasks)) {
     for (const c of t.concerns ?? []) console.log(`  ${paint(33, '!')} ${t.id} raised: ${c}`);
@@ -220,7 +225,7 @@ const commands: Record<string, (ctx: Ctx) => Promise<number>> = {
     const plan = loadPlan(ctx.root);
     validatePlan(plan, contract, hash, repoNames(ctx));
     const round = await verifyRun(recorded(ctx, state.id), state, contract);
-    state.status = round.results.every((r) => r.verdict === 'pass') ? 'proven' : 'unproven';
+    state.status = roundProven(round) ? 'proven' : 'unproven';
     saveState(ctx.root, state);
     writeReport(ctx.root, state, contract, plan);
     return finish(ctx, state);
@@ -247,6 +252,9 @@ const commands: Record<string, (ctx: Ctx) => Promise<number>> = {
     const last = state.rounds[state.rounds.length - 1];
     for (const r of last?.results ?? []) {
       console.log(`  ${r.verdict === 'pass' ? green('✓') : red('✗')} ${r.criterion.padEnd(4)} ${r.evidence.split('\n')[0]}`);
+    }
+    for (const g of last?.gates ?? []) {
+      console.log(`  ${g.verdict === 'pass' ? green('✓') : g.verdict === 'fail' ? red('✗') : paint(33, '–')} ${g.gate} (gate)  ${g.evidence.split('\n')[0]}`);
     }
     return 0;
   },

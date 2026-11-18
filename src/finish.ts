@@ -9,7 +9,7 @@ import { attemptBuild, cleanRun, ensureIntegration, integrationDir, integrationR
 import { repoRuns, runDir, saveState, sessionsDir } from './state.js';
 import type { Finding, Review, RunState } from './types.js';
 import { exec, git, gitTry, tail } from './util.js';
-import { verifyRun } from './verify.js';
+import { roundProven, verifyRun } from './verify.js';
 
 /** How far a run has come, for deciding which finishing steps are on offer. */
 export function reached(state: RunState, stage: Stage): boolean {
@@ -245,7 +245,7 @@ export async function fixReview(ctx: Ctx, state: RunState, all = true): Promise<
 
   // The fix is new code, so the contract's own lines are proven again before anything else.
   const round = await verifyRun(ctx, state, contract);
-  state.status = round.results.every((r) => r.verdict === 'pass') ? 'proven' : 'unproven';
+  state.status = roundProven(round) ? 'proven' : 'unproven';
   state.finishedAt = new Date().toISOString();
   saveState(ctx.root, state);
   writeReport(ctx.root, state, contract, plan);

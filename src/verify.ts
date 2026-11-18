@@ -1,10 +1,11 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { gateList, type Gate } from './config.js';
 import type { Ctx } from './runner.js';
 import { integrationDir, integrationRepo, repoNames } from './runner.js';
 import { REVIEW_SCHEMA, reviewPrompt, type ReviewOutput } from './prompts.js';
 import { repoRuns, runDir, saveState } from './state.js';
-import type { Contract, Criterion, ProofResult, RunState, VerificationRound } from './types.js';
+import type { Contract, Criterion, GateResult, ProofResult, RunState, VerificationRound } from './types.js';
 import { AbortError, exec, git, isAbort, mapLimit, tail } from './util.js';
 
 /**
@@ -12,6 +13,7 @@ import { AbortError, exec, git, isAbort, mapLimit, tail } from './util.js';
  *
  * Command proofs are run by this process, not by an agent: an exit code cannot be argued with.
  * Review proofs go to a read-only agent that sees the criterion and the code, never the builder.
+ * The gates from the settings run in between: the same commit, the same rule.
  */
 export async function verifyRun(ctx: Ctx, state: RunState, contract: Contract): Promise<VerificationRound> {
   const cwd = integrationDir(state);
@@ -23,8 +25,10 @@ export async function verifyRun(ctx: Ctx, state: RunState, contract: Contract): 
   mkdirSync(evidenceDir, { recursive: true });
   state.status = 'verifying';
   state.progress = [];
+  const gates = gateList(ctx.cfg);
+  state.gateProgress = gates.length ? [] : undefined;
   saveState(ctx.root, state);
-  ctx.log(`verifying ${contract.criteria.length} criteria at ${shortHead(head)} (round ${n})`);
+  ctx.log(`verifying ${contract.criteria.length} criteria${gates.length ? ` and ${gates.length} ${gates.length === 1 ? 'gate' : 'gates'}` : ''} at ${shortHead(head)} (round ${n})`);
 
   const setup = await setUp(ctx, state);
   if (setup.output) writeFileSync(path.join(evidenceDir, 'setup.log'), setup.output);
@@ -61,6 +65,29 @@ export async function verifyRun(ctx: Ctx, state: RunState, contract: Contract): 
     });
   }
 
+  // Gates before the review proofs: a command costs nothing, and its verdict is known before any agent starts.
+  const gateResults: GateResult[] = [];
+  for (const [i, g] of gates.entries()) {
+    if (ctx.signal?.aborted) throw new AbortError();
+    let r: GateResult;
+    if (state.gateBaseline?.[g.name] === 'fail') {
+      r = { gate: g.name, run: g.run, verdict: 'skipped', evidence: 'Already failed before the work, so it can not tell whether this change broke anything. Not counted.', durationMs: 0 };
+    } else if (setupFailure) {
+      r = { gate: g.name, run: g.run, verdict: 'fail', evidence: setupFailure, durationMs: 0 };
+    } else {
+      const ran = await runGate(ctx, state, g);
+      const logFile = path.join('evidence', `round-${n}`, `gate-${i + 1}.log`);
+      writeFileSync(path.join(runDir(ctx.root, state.id), logFile), `$ ${g.run}\n${ran.output}\n[${ran.how}]\n`);
+      const shown = tail(ran.output, ran.ok ? 6 : 25);
+      r = { gate: g.name, run: g.run, verdict: ran.ok ? 'pass' : 'fail', evidence: `${ran.how}${shown ? `\n${shown}` : ''}`, logFile, durationMs: ran.ms };
+    }
+    r.at = new Date().toISOString();
+    gateResults.push(r);
+    state.gateProgress?.push(r);
+    saveState(ctx.root, state);
+    ctx.log(`${r.verdict === 'pass' ? '✓' : r.verdict === 'fail' ? '✗' : '–'} ${g.name} (gate${r.verdict === 'skipped' ? ', skipped: it already failed before the work' : ''})`);
+  }
+
   const reviews = contract.criteria.filter((c) => c.proof.type === 'review');
   if (reviews.length) {
     const stats: string[] = [];
@@ -77,16 +104,29 @@ export async function verifyRun(ctx: Ctx, state: RunState, contract: Contract): 
     head,
     at: new Date().toISOString(),
     results: contract.criteria.map((c) => results.get(c.id)!),
+    ...(gates.length ? { gates: gateResults } : {}),
   };
   state.rounds.push(round);
   state.progress = undefined;
+  state.gateProgress = undefined;
   saveState(ctx.root, state);
   return round;
+}
+
+/** A round proves the delivery when every criterion holds and no gate fails. */
+export const roundProven = (round: VerificationRound) => round.results.every((r) => r.verdict === 'pass') && failedGates(round).length === 0;
+export const failedGates = (round?: VerificationRound) => (round?.gates ?? []).filter((g) => g.verdict === 'fail');
+
+/** A repository's gate runs inside that repository; the others run where the proofs run. */
+function runGate(ctx: Ctx, state: RunState, g: Gate) {
+  const repo = ctx.repos.find((r) => r.name && r.name === g.repo);
+  return runShell(g.run, repo ? integrationRepo(state, repo) : integrationDir(state), g.timeoutSec ?? ctx.cfg.timeouts.commandSec);
 }
 
 /**
  * Run the command proofs on the base commit, before anything is built.
  * A proof worth having is red here and green after the work; one that is already green only guards.
+ * A gate is the other way round: it should be green here, and one that is not is skipped for the run.
  */
 export async function runBaseline(ctx: Ctx, state: RunState, contract: Contract): Promise<void> {
   const cwd = integrationDir(state);
@@ -99,6 +139,18 @@ export async function runBaseline(ctx: Ctx, state: RunState, contract: Contract)
     baseline[c.id] = ok ? 'pass' : 'fail';
   }
   state.baseline = baseline;
+  // With a broken setup nothing is known about the gates, so they stay in and count.
+  const gates = setupOk ? gateList(ctx.cfg) : [];
+  if (gates.length) {
+    state.gateBaseline = {};
+    for (const g of gates) {
+      if (ctx.signal?.aborted) throw new AbortError();
+      state.gateBaseline[g.name] = (await runGate(ctx, state, g)).ok ? 'pass' : 'fail';
+    }
+    const red = gates.filter((g) => state.gateBaseline![g.name] === 'fail').map((g) => g.name);
+    if (red.length) ctx.log(`warning: ${red.join(', ')} already ${red.length === 1 ? 'fails' : 'fail'} before any work, so ${red.length === 1 ? 'it is' : 'they are'} skipped in this run: fix ${red.length === 1 ? 'it' : 'them'} on the base branch first`);
+    else ctx.log(`baseline: ${gates.length === 1 ? 'the gate passes' : `all ${gates.length} gates pass`} before the work`);
+  }
   saveState(ctx.root, state);
   const guards = commands.filter((c) => baseline[c.id] === 'pass').map((c) => c.id);
   ctx.log(`baseline: ${commands.length - guards.length} of ${commands.length} command proofs fail before the work, as they should`);

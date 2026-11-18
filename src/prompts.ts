@@ -1,4 +1,5 @@
-import type { Contract, Criterion, Finding, ProofResult, Task } from './types.js';
+import type { Gate } from './config.js';
+import type { Contract, Criterion, Finding, GateResult, ProofResult, Task } from './types.js';
 
 const str = { type: 'string' } as const;
 const strList = { type: 'array', items: str } as const;
@@ -184,7 +185,13 @@ export interface Neighbour {
   dir: string;
 }
 
-export function buildPrompt(contract: Contract, task: Task, notes: string[], neighbours: Neighbour[] = []): string {
+/** What a builder is told about the gates: they exist, and they are run for it. */
+function gatesNote(gates: Gate[]): string {
+  if (gates.length === 0) return '';
+  return `\nAfter every task is merged, these commands are also run on the whole result, and code that fails one is sent back:\n${gates.map((g) => `- ${g.name}: \`${g.run}\``).join('\n')}\n`;
+}
+
+export function buildPrompt(contract: Contract, task: Task, notes: string[], neighbours: Neighbour[] = [], gates: Gate[] = []): string {
   const mine = contract.criteria.filter((c) => task.covers.includes(c.id));
   const others = contract.criteria.filter((c) => !task.covers.includes(c.id));
   const workspace = task.repo
@@ -204,7 +211,7 @@ Your task ${task.id}: ${task.title}
 ${task.brief}
 
 ${mine.length ? `Criteria you are responsible for. An independent verifier will check each one with the proof shown; your own report is not taken as proof:\n${criteriaBlock(mine)}` : 'This task prepares the ground for later tasks and has no criterion of its own.'}
-${others.length ? `\nThe rest of the contract, which other tasks are building. Do not build these, but stay consistent with them:\n${others.map((c) => `- ${c.id}: ${c.text}`).join('\n')}\n` : ''}${notes.length ? `\nNotes from tasks already merged:\n${notes.join('\n')}\n` : ''}
+${others.length ? `\nThe rest of the contract, which other tasks are building. Do not build these, but stay consistent with them:\n${others.map((c) => `- ${c.id}: ${c.text}`).join('\n')}\n` : ''}${gatesNote(gates)}${notes.length ? `\nNotes from tasks already merged:\n${notes.join('\n')}\n` : ''}
 Rules:
 - Stay inside the task. Leave unrelated files alone.
 - Never weaken a proof to make it pass: do not edit a proof command's meaning, skip tests or stub out checks.
@@ -216,7 +223,7 @@ Rules:
 Finish with: "status" ("done", or "blocked" if you could not complete the task), "summary" (two or three sentences on what you built), "notes" (what a later task must know: file paths, interfaces, commands) and "concerns" (problems with the contract itself, if any).`;
 }
 
-export function fixPrompt(contract: Contract, failures: ProofResult[], repos: string[] = []): string {
+export function fixPrompt(contract: Contract, failures: ProofResult[], repos: string[] = [], gates: GateResult[] = []): string {
   const where = repos.length
     ? `in the repositories below this directory (${folders(repos)}, each a git worktree of its own)`
     : 'in this git worktree';
@@ -231,17 +238,26 @@ export function fixPrompt(contract: Contract, failures: ProofResult[], repos: st
       .map((l) => `    ${l}`)
       .join('\n')}`;
   });
-  return `A delivery was built and merged ${where}, but independent verification found criteria that do not hold. Make them hold.
+  const gateBlocks = gates.map(
+    (g) => `- ${g.gate}: \`${g.run}\`\n  Its output:\n${g.evidence
+      .split('\n')
+      .map((l) => `    ${l}`)
+      .join('\n')}`,
+  );
+  const failed = [
+    blocks.length ? `Failed criteria:\n${blocks.join('\n')}` : '',
+    gateBlocks.length ? `Commands that every delivery here must pass. They fail on the merged result:\n${gateBlocks.join('\n')}\nFix what this delivery broke. Do not silence the command (no ignore comments, no loosened settings, no excluded files).` : '',
+  ].filter(Boolean);
+  return `A delivery was built and merged ${where}, but independent verification found ${blocks.length ? 'criteria that do not hold' : 'that it does not pass a required command'}. Make ${blocks.length ? 'them hold' : 'it pass'}.
 
 Goal of the whole delivery: ${contract.goal}
 ${contract.outOfScope.length ? `Out of scope: ${contract.outOfScope.join('; ')}\n` : ''}
-Failed criteria:
-${blocks.join('\n')}
+${failed.join('\n\n')}
 
 Rules:
 - Fix the product, not the proof: do not edit a proof command's meaning, skip tests or stub out checks.
 - If a proof command could not pass for any correct implementation (a wrong path, a flag that does not exist), do not add files or shims whose only purpose is to satisfy it. Report the problem in "concerns" and set "status" to "blocked"; the person who owns the contract will correct it.
-- Every criterion is verified again after your fix, so do not break the ones that pass.
+- Every criterion${gates.length ? ' and every required command' : ''} is verified again after your fix, so do not break the ones that pass.
 - Run the proof commands yourself before you finish.
 - Commit your work. Anything left uncommitted is committed for you.${workspace}
 

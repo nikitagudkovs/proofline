@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmdirSync, rmSync, symlinkSync } from 'node:fs';
 import path from 'node:path';
-import { repoList, type Config, type Repo } from './config.js';
+import { gateList, repoList, type Config, type Repo } from './config.js';
 import { readPlannerUsage } from './authoring.js';
 import { loadApprovedContract } from './contract.js';
 import { runAuto } from './finish.js';
@@ -13,7 +13,7 @@ import { recordSessions, type SessionListener } from './sessions.js';
 import { newRunId, repoRuns, saveState, sessionsDir } from './state.js';
 import type { Contract, Plan, RepoRun, RunState, Task, TaskState, Usage } from './types.js';
 import { AbortError, createLock, git, gitTry, isAbort, mapLimit, tail } from './util.js';
-import { runBaseline, runSetup, verifyRun } from './verify.js';
+import { failedGates, roundProven, runBaseline, runSetup, verifyRun } from './verify.js';
 
 export interface Ctx {
   /** The repository, or the workspace folder that holds several. Contract, plan and run records live here. */
@@ -159,6 +159,7 @@ export async function executeRun(ctx: Ctx, state: RunState): Promise<RunState> {
     if (!isAbort(e)) throw e;
     for (const t of Object.values(state.tasks)) if (t.status === 'building') t.status = 'pending';
     state.progress = undefined;
+    state.gateProgress = undefined;
     state.status = 'stopped';
     saveState(ctx.root, state);
     ctx.log(`run ${state.id} stopped; "run --resume" continues it`);
@@ -187,15 +188,17 @@ async function execute(ctx: Ctx, state: RunState): Promise<RunState> {
   let fixRound = Object.keys(state.tasks).filter((k) => k.startsWith('FIX')).length;
   for (;;) {
     const failures = round.results.filter((r) => r.verdict === 'fail');
-    if (failures.length === 0 || fixRound >= ctx.cfg.maxFixRounds) break;
+    const gates = failedGates(round);
+    if (roundProven(round) || fixRound >= ctx.cfg.maxFixRounds) break;
     writeReport(ctx.root, state, contract, plan);
     fixRound += 1;
-    ctx.log(`${failures.length} ${failures.length === 1 ? 'criterion' : 'criteria'} not proven: sending ${failures.map((f) => f.criterion).join(', ')} back (fix round ${fixRound})`);
+    const what = [...failures.map((f) => f.criterion), ...gates.map((g) => g.gate)].join(', ');
+    ctx.log(`${[failures.length ? `${failures.length} ${failures.length === 1 ? 'criterion' : 'criteria'} not proven` : '', gates.length ? `${gates.length} ${gates.length === 1 ? 'gate fails' : 'gates fail'}` : ''].filter(Boolean).join(', ')}: sending ${what} back (fix round ${fixRound})`);
 
     const name = `FIX${fixRound}`;
-    const fix = (state.tasks[name] = newTaskState(name, `Fix ${failures.map((f) => f.criterion).join(', ')}`, failures.map((f) => f.criterion)));
+    const fix = (state.tasks[name] = newTaskState(name, `Fix ${what}`, failures.map((f) => f.criterion)));
     // A failed line may sit on either side of a seam, so the fixer gets every repository, all of them writable.
-    await attemptBuild(ctx, state, fix, fixPrompt(contract, failures, repoNames(ctx)), ctx.cfg.models.builder, ctx.repos);
+    await attemptBuild(ctx, state, fix, fixPrompt(contract, failures, repoNames(ctx), gates), ctx.cfg.models.builder, ctx.repos);
     if (fix.status !== 'built' || fix.commits.length === 0) {
       fix.status = 'failed';
       fix.error ??= 'the fix changed nothing';
@@ -205,7 +208,7 @@ async function execute(ctx: Ctx, state: RunState): Promise<RunState> {
     round = await verifyRun(ctx, state, contract);
   }
 
-  state.status = round.results.every((r) => r.verdict === 'pass') ? 'proven' : 'unproven';
+  state.status = roundProven(round) ? 'proven' : 'unproven';
   state.finishedAt = new Date().toISOString();
   saveState(ctx.root, state);
   writeReport(ctx.root, state, contract, plan);
@@ -267,7 +270,7 @@ async function buildAll(ctx: Ctx, state: RunState, contract: Contract, plan: Pla
 
     const own = (t: Task) => ctx.repos.filter((r) => r.name === (state.repos ? t.repo : ''));
     const neighbours = (t: Task) => (state.repos ? ctx.repos.filter((r) => r.name !== t.repo).map((r) => ({ name: r.name, dir: referenceDir(state, r) })) : []);
-    const prompt = (t: Task) => buildPrompt(contract, state.repos ? t : { ...t, repo: undefined }, notesFor(state, t), neighbours(t));
+    const prompt = (t: Task) => buildPrompt(contract, state.repos ? t : { ...t, repo: undefined }, notesFor(state, t), neighbours(t), gateList(ctx.cfg));
     await mapLimit(runnable, ctx.cfg.concurrency, (t) => attemptBuild(ctx, state, state.tasks[t.id], prompt(t), t.model, own(t)));
 
     // Merge one at a time, in plan order, so the history reads the same on every run.

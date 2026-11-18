@@ -108,7 +108,8 @@ export async function workspace(contractYaml: string, planTasksYaml: string, set
   await emptyRepo(path.join(root, 'api'), 'develop');
   await emptyRepo(path.join(root, 'web'), 'main');
   mkdirSync(path.join(root, DIR), { recursive: true });
-  writeFileSync(path.join(root, DIR, 'config.yaml'), `worktreeDir: ${path.join(base, 'worktrees')}\nrepos: [api, web]\n${settings}`);
+  // Settings that list the repositories themselves (to give one a setup or a gate) replace the plain list.
+  writeFileSync(path.join(root, DIR, 'config.yaml'), `worktreeDir: ${path.join(base, 'worktrees')}\n${/^repos:/m.test(settings) ? '' : 'repos: [api, web]\n'}${settings}`);
   writeFileSync(path.join(root, DIR, 'contract.yaml'), contractYaml);
   const hash = approveContract(root);
   writeFileSync(path.join(root, DIR, 'plan.yaml'), `contract_hash: ${hash}\n${planTasksYaml}`);
