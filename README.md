@@ -154,13 +154,16 @@ proofline go "Let users export their invoices as CSV from the billing page"
 |---|---|
 | `ui` | Opens the control room in your browser |
 | `doctor` | Shows which GitHub account and Claude login a run will use, and the branch it starts from |
-| `init --repos a,b` | Makes this folder a workspace of several repositories |
+| `init` | Adds `.proofline/` with default settings; `--repos a,b` makes this folder a workspace of several repositories |
+| `go "<goal>"` | Contract, approve, plan and run in one go; stops once for your approval (`--yes` skips it) |
 | `contract "<goal>"` | Drafts `.proofline/contract.yaml` |
 | `approve` | Locks the contract as it stands |
 | `plan` | Drafts `.proofline/plan.yaml` and validates it against the contract |
 | `run` | Builds, verifies, sends failures back; `--resume` continues an interrupted run |
 | `verify` | Runs the proofs again on an existing run |
 | `status` | Lists runs, tasks and the last verdict per criterion |
+| `report` | Prints the path of the run's report |
+| `review` | One independent, read-only read of the whole change; `--fix` sends its findings back to a builder and proves the contract again |
 | `ship` | Pushes the branch and opens a pull request; `--draft` allows an unproven run |
 | `merge` | Merges the run's pull requests into the branches they target; proven runs only |
 | `action "<name>"` | Runs a finishing action from the settings |
@@ -342,7 +345,7 @@ repos:                  # in a workspace, a repository's gates run inside it
 
 **State on disk, not in a conversation.** Every transition is written to `.proofline/runs/<id>/state.json`. Kill a run, hit a usage limit, close the laptop: `proofline run --resume` picks up with the merged work intact and rebuilds only what was unfinished.
 
-**Small surface.** The orchestrator and its server are about 4,000 lines of TypeScript with one runtime dependency (a YAML parser); the control room is about 2,000 lines of React, built ahead of time. The agent runtime sits behind a single-method interface, [`Engine`](src/engine.ts), which is also how the test suite runs whole orchestrations, and the server's API, with scripted agents and real git, in a few seconds and without spending a token.
+**Small surface.** The orchestrator and its server are about 4,600 lines of TypeScript with one runtime dependency (a YAML parser); the control room is about 2,400 lines of React, built ahead of time. The agent runtime sits behind a single-method interface, [`Engine`](src/engine.ts), which is also how the test suite runs whole orchestrations, and the server's API, with scripted agents and real git, in a few seconds and without spending a token.
 
 More in [docs/design.md](docs/design.md).
 
