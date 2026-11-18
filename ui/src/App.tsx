@@ -192,12 +192,23 @@ export function App() {
         </div>
       )}
 
+      {/* Every screen stays mounted and only the current one is shown, so a half-written goal or an unsaved edit is still there after a look at another tab. */}
       <main className="main">
-        {view === 'contract' && <ContractView shell={shell} />}
-        {view === 'plan' && <PlanView shell={shell} />}
-        {view === 'run' && <RunScreen shell={shell} runId={runId} />}
-        {view === 'sessions' && <SessionsView shell={shell} runId={runId} />}
-        {view === 'models' && <ModelsView shell={shell} />}
+        <div hidden={view !== 'contract'}>
+          <ContractView shell={shell} />
+        </div>
+        <div hidden={view !== 'plan'}>
+          <PlanView shell={shell} />
+        </div>
+        <div hidden={view !== 'run'}>
+          <RunScreen shell={shell} runId={runId} />
+        </div>
+        <div hidden={view !== 'sessions'}>
+          <SessionsView shell={shell} runId={runId} />
+        </div>
+        <div hidden={view !== 'models'}>
+          <ModelsView shell={shell} />
+        </div>
       </main>
 
       {open && <SessionDrawer runId={open.runId} sid={open.sid} tick={tick} onClose={() => setOpen(undefined)} />}

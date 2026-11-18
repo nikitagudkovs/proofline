@@ -12,12 +12,31 @@ const renumber = (c: Contract): Contract => ({
   criteria: c.criteria.map((k, i) => ({ ...k, id: `C${i + 1}` })),
 });
 
+function recall(key: string): string {
+  try {
+    return localStorage.getItem(key) ?? '';
+  } catch {
+    return '';
+  }
+}
+
 export function ContractView({ shell }: { shell: Shell }) {
   const { ov, act, readOnly } = shell;
   const saved = ov.contract.contract;
   const [draft, setDraft] = useState<Contract>(saved ?? blank());
   const [dirty, setDirty] = useState(false);
-  const [goal, setGoal] = useState('');
+  // The goal is the one thing here a person types at length, so it also survives a reload or a dropped connection.
+  const goalKey = `proofline.goal:${ov.repo.root}`;
+  const [goal, setGoalText] = useState(() => recall(goalKey));
+  const setGoal = (text: string) => {
+    setGoalText(text);
+    try {
+      if (text) localStorage.setItem(goalKey, text);
+      else localStorage.removeItem(goalKey);
+    } catch {
+      // storage is off or full: the goal still lives as long as the page does
+    }
+  };
 
   // Follow the file on disk (a fresh draft from the planner, an edit in an editor) unless there are unsaved edits here.
   useEffect(() => {
